@@ -31,6 +31,8 @@ PORT = int(os.environ.get("RETOMAZERA_PORT", "8797"))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DADOS = os.path.join(BASE_DIR, "dados.json")          # token/gist/inscrição do PC (fora do git)
 PASTA_DIAS = os.path.join(BASE_DIR, "lembretes")      # histórico local (fora do git)
+PASTA_COLETAS = os.path.join(BASE_DIR, "coletas")     # mensagens copiadas pela extensão (fora do git)
+NOMES_FONTES = {"whatsapp": "WhatsApp", "facebook": "Facebook", "olx": "OLX"}
 SITE_PUBLICO = "https://drakezera1337.github.io/retomazera/"
 PUSH_PEM = os.path.join(BASE_DIR, "push_vapid.pem")
 PUSH_CONTATO = "mailto:276884055+Drakezera1337@users.noreply.github.com"
@@ -242,6 +244,67 @@ def salvar_dia(corpo):
     return dia
 
 
+# --------------------------------------------------------------------------- coletas da extensão
+def salvar_coleta(corpo):
+    """Grava coletas/AAAA-MM-DD/<fonte>.json e refaz o conversas.txt (as 3 fontes juntas, para o Claude ler)."""
+    data, fonte = str(corpo.get("data") or ""), str(corpo.get("fonte") or "")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data) or fonte not in NOMES_FONTES:
+        raise ValueError("data ou fonte inválida")
+    pasta = os.path.join(PASTA_COLETAS, data)
+    os.makedirs(pasta, exist_ok=True)
+    with open(os.path.join(pasta, fonte + ".json"), "w", encoding="utf-8") as f:
+        json.dump(corpo, f, ensure_ascii=False, indent=1)
+    gerar_texto(data)
+    return len(corpo.get("conversas") or [])
+
+
+def coletas_do_dia(data):
+    pasta = os.path.join(PASTA_COLETAS, data)
+    saida = {}
+    for fonte in NOMES_FONTES:
+        try:
+            with open(os.path.join(pasta, fonte + ".json"), encoding="utf-8") as f:
+                saida[fonte] = json.load(f)
+        except (OSError, ValueError):
+            pass
+    return saida
+
+
+def gerar_texto(data):
+    """Texto compacto: cabeçalho por conversa e uma linha por mensagem (J = João, C = cliente)."""
+    linhas = [f"CONVERSAS DE {data} (J = João/loja, C = cliente)", ""]
+    for fonte, c in coletas_do_dia(data).items():
+        quando = time.strftime("%d/%m %H:%M", time.localtime((c.get("coletadoEm") or 0) / 1000))
+        convs = c.get("conversas") or []
+        linhas.append(f"======== {NOMES_FONTES[fonte]} — {len(convs)} conversa(s) — coletado {quando}"
+                      + (f" — perfil {c['perfil']}" if c.get("perfil") else ""))
+        if c.get("erro"):
+            linhas.append(f"ERRO NA COLETA: {c['erro']}")
+        if c.get("aviso"):
+            linhas.append(f"aviso: {c['aviso']}")
+        for i, cv in enumerate(convs, 1):
+            linhas.append("")
+            cab = f"### {NOMES_FONTES[fonte]} #{i} | {cv.get('nome') or '?'}"
+            if cv.get("anuncio"):
+                cab += f" | anúncio: {cv['anuncio']}"
+            cab += f" | contato: {cv.get('contato') or '—'}"
+            if cv.get("rotulo"):
+                cab += f" | última atividade: {cv['rotulo']}"
+            linhas.append(cab)
+            if cv.get("aviso"):
+                linhas.append(f"(aviso: {cv['aviso']})")
+            dia_atual = None
+            for m in cv.get("mensagens") or []:
+                if m.get("data") and m["data"] != dia_atual:
+                    dia_atual = m["data"]
+                    linhas.append(f"[{'/'.join(reversed(dia_atual.split('-')))}]")
+                texto = " ".join(str(m.get("texto") or "").split())
+                linhas.append(f"{m.get('hora') or '--:--'} {'J' if m.get('eu') else 'C'}: {texto}")
+        linhas.append("")
+    with open(os.path.join(PASTA_COLETAS, data, "conversas.txt"), "w", encoding="utf-8") as f:
+        f.write("\n".join(linhas))
+
+
 # --------------------------------------------------------------------------- laço do Gist
 def processar_gist():
     """Lê push.json (aparelhos inscritos) e responde aos pedidos de teste do celular."""
@@ -308,7 +371,8 @@ class Handler(SimpleHTTPRequestHandler):
     # só aceita POST da própria página (localhost) ou de scripts locais sem Origin
     def _origem_ok(self):
         origem = self.headers.get("Origin")
-        return origem is None or origem in (f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}")
+        return (origem is None or origem in (f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}")
+                or origem.startswith("chrome-extension://"))
 
     PRIVADOS = (".pem", ".tmp", ".py", ".bat", ".md", ".log", ".txt")
 
@@ -318,6 +382,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(self.status_json())
         if path == "/api/lembretes":
             return self._json({"dias": dias_locais(), "ts": int(time.time() * 1000)})
+        if path == "/api/coletas":
+            data = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("data", [""])[0]
+            return self._json({f: {"conversas": len(c.get("conversas") or []), "erro": c.get("erro"), "coletadoEm": c.get("coletadoEm")}
+                               for f, c in coletas_do_dia(data).items()})
         if path == "/api/celular":
             cfg = gist_cfg()
             if not cfg:
@@ -326,7 +394,7 @@ class Handler(SimpleHTTPRequestHandler):
             b64 = urllib.parse.quote(base64.urlsafe_b64encode(dados).decode().rstrip("="))
             return self._json({"url": f"{SITE_PUBLICO}#config={b64}"})
         if (path.lower().endswith(self.PRIVADOS) or "/." in path or path.startswith("/lembretes/")
-                or path in ("/dados.json",)):
+                or path.startswith("/coletas/") or path in ("/dados.json",)):
             return self._json({"erro": "não encontrado"}, 404)
         return super().do_GET()
 
@@ -361,6 +429,13 @@ class Handler(SimpleHTTPRequestHandler):
             enviados = enviar_push(payload_dia(dia)) if corpo.get("notificar", True) else 0
             print(f"[lembretes] {dia['data']}: {len(dia['itens'])} cliente(s), gist={publicado}, push={enviados}")
             return self._json({"ok": True, "itens": len(dia["itens"]), "gist": publicado, "push": enviados})
+        if path == "/api/coleta":
+            try:
+                n = salvar_coleta(corpo)
+            except (ValueError, OSError) as exc:
+                return self._json({"ok": False, "erro": str(exc)}, 400)
+            print(f"[coleta] {corpo.get('data')} {corpo.get('fonte')}: {n} conversa(s)" + (f" — ERRO {corpo['erro']}" if corpo.get("erro") else ""))
+            return self._json({"ok": True, "conversas": n})
         if path == "/api/gist":
             token = str(corpo.get("token") or "").strip()
             if not token:

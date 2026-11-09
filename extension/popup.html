@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font: 13px system-ui, sans-serif; width: 290px; margin: 0; padding: 12px; color: #1b2420; }
+    h1 { font-size: 15px; margin: 0 0 8px; color: #00966e; }
+    label { display: block; margin: 5px 0; }
+    input[type=text], input[type=time] { width: 100%; box-sizing: border-box; padding: 5px; }
+    button { border: 0; border-radius: 8px; padding: 8px 10px; font-weight: 600; cursor: pointer; margin-top: 8px; }
+    .verde { background: #00966e; color: #fff; }
+    .sub { color: #66736d; font-size: 12px; }
+    #est { margin-top: 10px; white-space: pre-wrap; background: #f3f5f4; border-radius: 8px; padding: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Retomazera Coletor</h1>
+  <div class="sub">Coletar NESTE perfil do Chrome:</div>
+  <label><input type="checkbox" id="whatsapp"> WhatsApp Web</label>
+  <label><input type="checkbox" id="facebook"> Facebook (Marketplace)</label>
+  <label><input type="checkbox" id="olx"> OLX (chat, "Vendendo")</label>
+  <label>Nome deste perfil <input type="text" id="perfil" placeholder="ex.: João Luiz"></label>
+  <label>Horário da coleta diária <input type="time" id="hora"></label>
+  <button class="verde" id="salvar">Salvar</button>
+  <button id="agora">Coletar agora</button>
+  <div id="est" class="sub"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
