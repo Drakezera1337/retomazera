@@ -265,7 +265,9 @@ async function extrairWhatsapp(dataAlvo, limite = 60) {
       const n = snap();
       if (!n && st === 0 && pane.scrollHeight === h0) { if (++parado >= 3) break; } else parado = 0;
     }
-    const titulo = main.querySelector('header')?.innerText.split('\n')[0] || '';
+    // o cabeçalho pode começar pelas iniciais da foto ("P"): usa o texto todo do cabeçalho para conferir
+    const cab = main.querySelector('header');
+    const titulo = (cab?.querySelector('span[title]')?.getAttribute('title') || '') + ' ' + (cab?.innerText || '').replace(/\n/g, ' ').slice(0, 200);
     return { titulo, msgs: ordem.map((k) => mapa.get(k)).filter(Boolean) };
   }
 
