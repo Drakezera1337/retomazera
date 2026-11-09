@@ -1,6 +1,7 @@
-// Retomazera Coletor — todo dia (padrão 23:55) abre os sites marcados NESTE perfil do Chrome,
-// copia as mensagens do dia e manda ao server.py do Retomazera (127.0.0.1:8797/api/coleta),
-// que salva em coletas/AAAA-MM-DD/<fonte>.json. Depois a tarefa do Claude só lê esses arquivos.
+// Retomazera Coletor — todo dia (padrão 07:00) abre os sites marcados NESTE perfil do Chrome,
+// copia as mensagens desde a coleta automática anterior (madrugada incluída) e manda ao server.py
+// do Retomazera (127.0.0.1:8797/api/coleta), que salva em coletas/AAAA-MM-DD/<fonte>.json.
+// Depois a tarefa do Claude (07:15) só lê esses arquivos.
 // Só leitura: nada é enviado nos sites.
 importScripts('extratores.js');
 
@@ -10,7 +11,7 @@ const FONTES = {
   facebook: { nome: 'Facebook', url: 'https://www.facebook.com/marketplace/inbox', padrao: null, func: extrairFacebook },
   olx: { nome: 'OLX', url: 'https://chat.olx.com.br/', padrao: null, func: extrairOlx },
 };
-const PADRAO = { fontes: { whatsapp: false, facebook: false, olx: false }, hora: '23:55', perfil: '',
+const PADRAO = { fontes: { whatsapp: false, facebook: false, olx: false }, hora: '07:00', perfil: '',
   ignorar: ['Pai - Pessoal', 'Mãe', 'Amor', 'Santo Burger', 'Lucian'] };
 
 async function config() {
@@ -25,6 +26,9 @@ function proximaVez(hora) {
   return d.getTime();
 }
 async function agendar() {
+  // a coleta passou da meia-noite para as 07:00 (pega a madrugada): ajusta quem já tinha 23:55 salvo
+  const { cfg } = await chrome.storage.local.get('cfg');
+  if (cfg && !cfg.manha) await chrome.storage.local.set({ cfg: { ...cfg, hora: cfg.hora === '23:55' ? '07:00' : cfg.hora, manha: true } });
   const c = await config();
   await chrome.alarms.clear('coleta');
   chrome.alarms.create('coleta', { when: proximaVez(c.hora), periodInMinutes: 1440 });
@@ -33,11 +37,23 @@ chrome.runtime.onInstalled.addListener(agendar);
 chrome.runtime.onStartup.addListener(agendar);
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'coleta') coletar('alarme'); });
 
-// Data alvo: até 06:00 conta como o dia anterior (coleta atrasada por PC/Chrome desligado)
-function dataAlvo() {
+// Pasta da coleta = dia em que ela roda
+function hojeIso() {
   const d = new Date();
-  if (d.getHours() < 6) d.setDate(d.getDate() - 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+// Início do período de cada fonte: fim da última coleta AUTOMÁTICA que deu certo (as manuais não
+// mexem nisso). Na primeira vez: a última coleta feita (ou meia-noite de ontem). Nunca mais que 7 dias para trás.
+async function desdeDe(k, inicioAnterior) {
+  const { ultimas } = await chrome.storage.local.get('ultimas');
+  const ontem = new Date(); ontem.setDate(ontem.getDate() - 1); ontem.setHours(0, 0, 0, 0);
+  // primeira automática: continua de onde a última coleta (mesmo manual) parou
+  const v = (ultimas || {})[k] || inicioAnterior || ontem.getTime();
+  return Math.max(v, Date.now() - 7 * 864e5);
+}
+async function marcarUltima(k, ms) {
+  const { ultimas } = await chrome.storage.local.get('ultimas');
+  await chrome.storage.local.set({ ultimas: { ...(ultimas || {}), [k]: ms } });
 }
 
 async function estado(mud) {
@@ -61,7 +77,9 @@ async function coletar(origem) {
   if (rodando) return;
   rodando = true;
   const c = await config();
-  const data = dataAlvo();
+  const data = hojeIso();
+  const { est: anterior } = await chrome.storage.local.get('est'); // antes de sobrescrever o estado
+  const inicioAnterior = anterior && !anterior.rodando ? anterior.inicio : null;
   const ativas = Object.keys(FONTES).filter((k) => c.fontes[k]);
   await estado({ rodando: true, inicio: Date.now(), data, origem, fontes: {} });
   let janela = null;
@@ -88,12 +106,15 @@ async function coletar(origem) {
           await esperarCarregar(tabId);
         }
         await new Promise((r) => setTimeout(r, 3000));
-        const [res] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func, args: [data, c.ignorar || []] });
+        const desde = await desdeDe(k, inicioAnterior);
+        const inicioFonte = Date.now();
+        const [res] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func, args: [desde, c.ignorar || []] });
         const r = (res && res.result) || { erro: 'sem resposta do extrator', conversas: [] };
-        const corpo = { fonte: k, data, perfil: c.perfil, coletadoEm: Date.now(), ...r };
+        const corpo = { fonte: k, data, perfil: c.perfil, desde, ate: inicioFonte, coletadoEm: Date.now(), ...r };
         const resp = await fetch(`${SERVIDOR}/api/coleta`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
         const j = await resp.json().catch(() => ({}));
         const n = (r.conversas || []).length;
+        if (j.ok && !r.erro && origem === 'alarme') await marcarUltima(k, inicioFonte);
         await estado({ fontes: { ...((await chrome.storage.local.get('est')).est.fontes || {}), [k]: r.erro ? `erro: ${r.erro}` : (j.ok ? `${n} conversa(s)` : `servidor: ${j.erro || resp.status}`) } });
       } catch (e) {
         await estado({ fontes: { ...((await chrome.storage.local.get('est')).est.fontes || {}), [k]: `erro: ${String(e.message || e).slice(0, 150)}` } });

@@ -278,6 +278,9 @@ def gerar_texto(data):
         convs = c.get("conversas") or []
         linhas.append(f"======== {NOMES_FONTES[fonte]} — {len(convs)} conversa(s) — coletado {quando}"
                       + (f" — perfil {c['perfil']}" if c.get("perfil") else ""))
+        if c.get("desde"):
+            fmt = lambda ms: time.strftime("%d/%m %H:%M", time.localtime(ms / 1000))
+            linhas.append(f"período: mensagens desde {fmt(c['desde'])} até {fmt(c.get('ate') or c.get('coletadoEm') or 0)}")
         if c.get("erro"):
             linhas.append(f"ERRO NA COLETA: {c['erro']}")
         if c.get("aviso"):

@@ -1,13 +1,34 @@
 // Extratores do Retomazera Coletor. Cada função roda DENTRO da página (world MAIN) via
 // chrome.scripting.executeScript, então precisa ser autossuficiente (nada de fora da função).
 // Só leitura: abrem conversas e leem o que está na tela. Nunca digitam em caixa de mensagem.
-// Recebem a data alvo 'AAAA-MM-DD' e devolvem { conversas: [...], aviso?, erro? }.
+// Recebem 'desde' (ms: início do período = última coleta) e devolvem { conversas: [...], aviso?, erro? }.
 // Cada conversa: { nome, contato, anuncio?, rotulo, mensagens: [{ data, hora, eu, autor, texto }] }.
 
 /* eslint-disable no-unused-vars */
 
 // ------------------------------------------------------------------ OLX
-async function extrairOlx(dataAlvo, ignorar = []) {
+async function extrairOlx(desde, ignorar = []) {
+  // período: tudo desde a última coleta (desde, em ms) até agora
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const diasJanela = (() => { const st = new Set(); const d = new Date(desde); d.setHours(0, 0, 0, 0); const h = new Date(); for (; d <= h; d.setDate(d.getDate() + 1)) st.add(iso(d)); return st; })();
+  const noPeriodo = (data, hora) => {
+    if (!data) return true;
+    const [a, m, d] = data.split('-').map(Number);
+    const [hh, mi] = String(hora || '23:59').split(':').map(Number);
+    return new Date(a, m - 1, d, hh || 0, mi || 0).getTime() >= desde - 60000;
+  };
+  // rótulo da lista ("14:32", "Ontem", "Domingo"/"Dom", "05/11") → esse dia cai no período?
+  const rotuloNoPeriodo = (r) => {
+    r = (r || '').trim().toLowerCase();
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    if (/^\d{1,2}:\d{2}$/.test(r) || /^\d+\s*(min|h)$/.test(r)) return true;
+    if (r === 'ontem') { d.setDate(d.getDate() - 1); return diasJanela.has(iso(d)); }
+    const i = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'].findIndex((x) => r.startsWith(x) || (x === 'sáb' && r.startsWith('sab')));
+    if (i >= 0) { do { d.setDate(d.getDate() - 1); } while (d.getDay() !== i); return diasJanela.has(iso(d)); }
+    const m = r.match(/^(\d{1,2})\/(\d{1,2})/);
+    if (m) return [...diasJanela].some((x) => x.endsWith(`-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`));
+    return false;
+  };
   // contatos pessoais que o João pediu para não coletar (nome exatamente igual ou telefone)
   const normal = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
   const termos = (ignorar || []).map(normal).filter(Boolean);
@@ -18,18 +39,6 @@ async function extrairOlx(dataAlvo, ignorar = []) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const esperar = async (fn, ms = 20000) => { const fim = Date.now() + ms; while (Date.now() < fim) { const v = fn(); if (v) return v; await sleep(400); } return null; };
   const MESES = { janeiro: 1, fevereiro: 2, 'março': 3, marco: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12 };
-  const SEMANA = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
-  const [aa, mm, dd] = dataAlvo.split('-').map(Number);
-  const alvo = new Date(aa, mm - 1, dd);
-  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
-  const ehHoje = alvo.getTime() === hoje.getTime();
-  const nomeDia = SEMANA[alvo.getDay()];
-  const rotuloBate = (r) => {
-    r = (r || '').trim().toLowerCase();
-    if (/^\d{1,2}:\d{2}$/.test(r)) return true; // hoje (ou depois da meia-noite, se o alvo for ontem)
-    if (ehHoje) return false;
-    return r === 'ontem' || r.startsWith(nomeDia.slice(0, 3));
-  };
 
   if (!await esperar(() => document.querySelector('a[data-testid="chat-list-item"]'))) {
     return { erro: 'lista de conversas não carregou (OLX deslogada?)', conversas: [] };
@@ -47,7 +56,7 @@ async function extrairOlx(dataAlvo, ignorar = []) {
   };
   const alvos = [...document.querySelectorAll('a[data-testid="chat-list-item"]')]
     .map((a) => ({ a, l: linhas(a) }))
-    .filter((x) => rotuloBate(x.l[x.l.length - 1]))
+    .filter((x) => rotuloNoPeriodo(x.l[x.l.length - 1]))
     .slice(0, 40);
 
   const conversas = [];
@@ -84,6 +93,7 @@ async function extrairOlx(dataAlvo, ignorar = []) {
           if (texto) msgs.push({ data: dataAtual, hora, eu, autor: eu ? 'João' : autor, texto: texto.slice(0, 1500) });
         }
       }
+      if (msgs.length && !msgs.some((m) => noPeriodo(m.data, m.hora))) continue; // nada novo no período
       conversas.push({ nome: l[l.length - 3] || '', anuncio: l[l.length - 4] || '', contato: location.href, rotulo: l[l.length - 1], mensagens: msgs.slice(-80) });
     } catch (e) {
       conversas.push({ nome: l[l.length - 3] || '', contato: href, mensagens: [], aviso: 'erro: ' + String(e).slice(0, 120) });
@@ -94,7 +104,28 @@ async function extrairOlx(dataAlvo, ignorar = []) {
 }
 
 // ------------------------------------------------------------------ Facebook Marketplace
-async function extrairFacebook(dataAlvo, ignorar = []) {
+async function extrairFacebook(desde, ignorar = []) {
+  // período: tudo desde a última coleta (desde, em ms) até agora
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const diasJanela = (() => { const st = new Set(); const d = new Date(desde); d.setHours(0, 0, 0, 0); const h = new Date(); for (; d <= h; d.setDate(d.getDate() + 1)) st.add(iso(d)); return st; })();
+  const noPeriodo = (data, hora) => {
+    if (!data) return true;
+    const [a, m, d] = data.split('-').map(Number);
+    const [hh, mi] = String(hora || '23:59').split(':').map(Number);
+    return new Date(a, m - 1, d, hh || 0, mi || 0).getTime() >= desde - 60000;
+  };
+  // rótulo da lista ("14:32", "Ontem", "Domingo"/"Dom", "05/11") → esse dia cai no período?
+  const rotuloNoPeriodo = (r) => {
+    r = (r || '').trim().toLowerCase();
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    if (/^\d{1,2}:\d{2}$/.test(r) || /^\d+\s*(min|h)$/.test(r)) return true;
+    if (r === 'ontem') { d.setDate(d.getDate() - 1); return diasJanela.has(iso(d)); }
+    const i = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'].findIndex((x) => r.startsWith(x) || (x === 'sáb' && r.startsWith('sab')));
+    if (i >= 0) { do { d.setDate(d.getDate() - 1); } while (d.getDay() !== i); return diasJanela.has(iso(d)); }
+    const m = r.match(/^(\d{1,2})\/(\d{1,2})/);
+    if (m) return [...diasJanela].some((x) => x.endsWith(`-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`));
+    return false;
+  };
   // contatos pessoais que o João pediu para não coletar (nome exatamente igual ou telefone)
   const normal = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
   const termos = (ignorar || []).map(normal).filter(Boolean);
@@ -104,21 +135,8 @@ async function extrairFacebook(dataAlvo, ignorar = []) {
   };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const esperar = async (fn, ms = 20000) => { const fim = Date.now() + ms; while (Date.now() < fim) { const v = fn(); if (v) return v; await sleep(400); } return null; };
-  const SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
-  const [aa, mm, dd] = dataAlvo.split('-').map(Number);
-  const alvo = new Date(aa, mm - 1, dd);
-  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
-  const ehHoje = alvo.getTime() === hoje.getTime();
-  const abrev = SEMANA[alvo.getDay()];
-  const rotuloBate = (r) => {
-    r = (r || '').trim().toLowerCase();
-    if (/^\d{1,2}:\d{2}$/.test(r) || /^\d+\s*(min|h)$/.test(r)) return true;
-    if (ehHoje) return false;
-    return r === 'ontem' || r.startsWith(abrev);
-  };
   const ehRotulo = (s) => /^\d{1,2}:\d{2}$/.test(s) || /^\d+\s*(min|h)$/.test(s) || /^(dom|seg|ter|qua|qui|sex|sáb|sab)\.?$/i.test(s) || /^ontem$/i.test(s) || /^\d{1,2} de [a-z]+\.?$/i.test(s) || /^\d{1,2}\/\d{1,2}/.test(s);
 
-  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const DIAS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
   const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   // rótulo de dia do Facebook → AAAA-MM-DD (sem rótulo = hoje)
@@ -161,7 +179,7 @@ async function extrairFacebook(dataAlvo, ignorar = []) {
   const aba = [...document.querySelectorAll('[role=tab], a, div[role=button]')].find((e) => e.innerText.trim() === 'Venda');
   if (aba && aba.getAttribute('aria-selected') === 'false') { aba.click(); await sleep(2000); }
 
-  const alvos = acharLinhas().filter((x) => rotuloBate(x.rot)).slice(0, 40);
+  const alvos = acharLinhas().filter((x) => rotuloNoPeriodo(x.rot)).slice(0, 40);
   const conversas = [];
   for (const { el, rot, nome, anuncio } of alvos) {
     if (ignorado(nome, '')) continue;
@@ -188,6 +206,7 @@ async function extrairFacebook(dataAlvo, ignorar = []) {
         if (ult && ult.hora === m[2] && ult.texto === m[4]) continue;
         msgs.push({ data, hora: m[2], eu, autor: eu ? 'João' : m[3].trim(), texto: m[4].slice(0, 1500) });
       }
+      if (msgs.length && !msgs.some((m) => noPeriodo(m.data, m.hora))) continue; // nada novo no período
       conversas.push({ nome: nome.trim(), anuncio: resto.join(' · '), contato: 'https://www.facebook.com/marketplace/inbox', rotulo: rot, mensagens: msgs.slice(-80) });
     } catch (e) {
       conversas.push({ nome, contato: 'https://www.facebook.com/marketplace/inbox', mensagens: [], aviso: 'erro: ' + String(e).slice(0, 120) });
@@ -198,9 +217,30 @@ async function extrairFacebook(dataAlvo, ignorar = []) {
 }
 
 // ------------------------------------------------------------------ WhatsApp Web
-// A lista de conversas do dia vem de WAWebCollections.Chat (só leitura de dados já carregados —
+// A lista de conversas do período vem de WAWebCollections.Chat (só leitura de dados já carregados —
 // NÃO usa funções que carregam mensagens). As mensagens são lidas da tela, rolando o painel.
-async function extrairWhatsapp(dataAlvo, ignorar = [], limite = 60) {
+async function extrairWhatsapp(desde, ignorar = [], limite = 60) {
+  // período: tudo desde a última coleta (desde, em ms) até agora
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const diasJanela = (() => { const st = new Set(); const d = new Date(desde); d.setHours(0, 0, 0, 0); const h = new Date(); for (; d <= h; d.setDate(d.getDate() + 1)) st.add(iso(d)); return st; })();
+  const noPeriodo = (data, hora) => {
+    if (!data) return true;
+    const [a, m, d] = data.split('-').map(Number);
+    const [hh, mi] = String(hora || '23:59').split(':').map(Number);
+    return new Date(a, m - 1, d, hh || 0, mi || 0).getTime() >= desde - 60000;
+  };
+  // rótulo da lista ("14:32", "Ontem", "Domingo"/"Dom", "05/11") → esse dia cai no período?
+  const rotuloNoPeriodo = (r) => {
+    r = (r || '').trim().toLowerCase();
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    if (/^\d{1,2}:\d{2}$/.test(r) || /^\d+\s*(min|h)$/.test(r)) return true;
+    if (r === 'ontem') { d.setDate(d.getDate() - 1); return diasJanela.has(iso(d)); }
+    const i = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'].findIndex((x) => r.startsWith(x) || (x === 'sáb' && r.startsWith('sab')));
+    if (i >= 0) { do { d.setDate(d.getDate() - 1); } while (d.getDay() !== i); return diasJanela.has(iso(d)); }
+    const m = r.match(/^(\d{1,2})\/(\d{1,2})/);
+    if (m) return [...diasJanela].some((x) => x.endsWith(`-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`));
+    return false;
+  };
   // contatos pessoais que o João pediu para não coletar (nome exatamente igual ou telefone)
   const normal = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
   const termos = (ignorar || []).map(normal).filter(Boolean);
@@ -210,9 +250,7 @@ async function extrairWhatsapp(dataAlvo, ignorar = [], limite = 60) {
   };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const esperar = async (fn, ms = 20000) => { const fim = Date.now() + ms; while (Date.now() < fim) { const v = fn(); if (v) return v; await sleep(500); } return null; };
-  const [aa, mm, dd] = dataAlvo.split('-').map(Number);
-  const ini = new Date(aa, mm - 1, dd).getTime() / 1000;
-  const fim = ini + 86400;
+  const ini = desde / 1000;
 
   const pronto = await esperar(() => document.querySelector('#pane-side') && window.require && (() => { try { return window.require('WAWebCollections').Chat.getModelsArray().length > 0; } catch { return false; } })(), 90000);
   if (!pronto) return { erro: document.querySelector('canvas') ? 'WhatsApp Web deslogado (pede QR)' : 'WhatsApp Web não carregou', conversas: [] };
@@ -279,8 +317,8 @@ async function extrairWhatsapp(dataAlvo, ignorar = [], limite = 60) {
     pane.scrollTop = pane.scrollHeight; await sleep(800); snap();
     let parado = 0;
     for (let p = 0; p < 40; p++) {
-      // para quando já tem mensagens anteriores ao dia alvo (contexto suficiente)
-      const antigas = ordem.map((k) => mapa.get(k)).filter((m) => m && !m.semData && dataDe(m.h) && dataDe(m.h) < dataAlvo).length;
+      // para quando já tem mensagens anteriores ao período (contexto suficiente)
+      const antigas = ordem.map((k) => mapa.get(k)).filter((m) => m && !m.semData && dataDe(m.h) && !noPeriodo(dataDe(m.h), m.h.slice(0, 5))).length;
       if (antigas >= 8) break;
       const st = pane.scrollTop, h0 = pane.scrollHeight;
       pane.scrollTop = Math.max(0, st - pane.clientHeight * 0.6);
@@ -310,9 +348,8 @@ async function extrairWhatsapp(dataAlvo, ignorar = [], limite = 60) {
         const eu = /Gamezeraofc/i.test(m.autor);
         return { data: d || ultimaData, hora, eu, autor: eu ? 'João' : (m.autor || c.nm), texto: (m.texto || '').slice(0, 1500) };
       });
-      const doDia = msgs.filter((m) => m.data === dataAlvo).length;
-      if (!doDia && confere) continue; // última atividade não era mensagem do dia (ex.: só abriu)
-      conversas.push({ nome: c.nm || r.titulo, contato: c.ph, mensagens: msgs.slice(-80), ...(confere ? {} : { aviso: `título aberto "${r.titulo}" não confere` }) });
+      if (!msgs.some((m) => m.data && noPeriodo(m.data, m.hora))) continue; // nenhuma mensagem no período (ex.: só abriu)
+      conversas.push({ nome: c.nm || r.titulo, contato: c.ph, mensagens: msgs.slice(-80) });
     } catch (e) {
       conversas.push({ nome: c.nm, contato: c.ph, mensagens: [], aviso: 'erro: ' + String(e).slice(0, 120) });
     }
@@ -320,6 +357,5 @@ async function extrairWhatsapp(dataAlvo, ignorar = [], limite = 60) {
   }
   // limpa a busca
   try { setValor.call(box, ''); box.dispatchEvent(new Event('input', { bubbles: true })); } catch { /* ok */ }
-  void fim;
   return { conversas };
 }

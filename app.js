@@ -113,7 +113,7 @@ function telaDia(dia, titulo) {
     const conectar = !NO_PC && !Sync.enabled();
     return `<div class="vazio">${S.carregando ? 'Carregando…' : conectar
       ? 'Conecte ao PC: no PC abra o Retomazera → Ajustes → <b>Mostrar QR code</b>. Aqui: Ajustes → <b>Ler QR do PC</b>.'
-      : 'Ainda não há lista. A primeira chega depois da meia-noite.'}
+      : 'Ainda não há lista. Ela chega todo dia por volta das 7h30.'}
       ${S.erro ? `<br><br>⚠️ ${esc(S.erro)}` : ''}</div>`;
   }
   const itens = [...(dia.itens || [])];
@@ -125,7 +125,7 @@ function telaDia(dia, titulo) {
   itens.forEach((x) => { const c = (x.canal || 'outro').toLowerCase(); porCanal[c] = (porCanal[c] || 0) + 1; });
   const fontes = dia.fontes || {};
   return `<h1>${esc(titulo)}</h1>
-    <p class="sub">Conversas de ${esc(dataBR(dia.data))} · gerado ${esc(ago(dia.geradoEm))}</p>
+    <p class="sub">Lista de ${esc(dataBR(dia.data))} (conversas das últimas ~24 h) · gerada ${esc(ago(dia.geradoEm))}</p>
     ${dia.resumo ? `<div class="painel resumo">${esc(dia.resumo)}</div>` : ''}
     <div class="contagem">
       <span class="chip">${itens.length} para chamar · ${pendentes} pendente(s)</span>

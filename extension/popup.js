@@ -21,7 +21,7 @@ chrome.runtime.onMessage.addListener((m) => { if (m.tipo === 'estado') mostrar(m
 
 $('salvar').onclick = () => {
   const cfg = { fontes: { whatsapp: $('whatsapp').checked, facebook: $('facebook').checked, olx: $('olx').checked },
-    perfil: $('perfil').value.trim(), hora: $('hora').value || '23:55',
+    perfil: $('perfil').value.trim(), hora: $('hora').value || '07:00', manha: true,
     ignorar: $('ignorar').value.split('\n').map((x) => x.trim()).filter(Boolean) };
   chrome.runtime.sendMessage({ tipo: 'salvar', cfg }, () => {
     chrome.runtime.sendMessage({ tipo: 'info' }, ({ est, proxima }) => mostrar(est, proxima));
