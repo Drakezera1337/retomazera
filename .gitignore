@@ -9,3 +9,4 @@ __pycache__/
 *.tmp
 server.log
 server.log.1
+garantir_claude.log
