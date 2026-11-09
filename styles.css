@@ -1,3 +1,4 @@
+[hidden] { display: none !important; }
 :root {
   --verde: #00966e; --verde-esc: #00714f; --fundo: #f3f5f4; --card: #fff; --texto: #1b2420; --suave: #66736d;
   --borda: #dde3e0; --alta: #e0392b; --media: #e88a00; --baixa: #7a8a83;
