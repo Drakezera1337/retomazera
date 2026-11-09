@@ -1,9 +1,11 @@
 """
 Retomazera - servidor local.
 
-Todo dia, às 00h, uma tarefa agendada do Claude lê as conversas do dia (WhatsApp Web,
-Messenger do Facebook e chat da OLX, no Chrome do PC) e manda para cá a lista de quem
-vale chamar de novo no dia seguinte para fechar venda (POST /api/lembretes).
+Uma vez por dia, ao ligar o PC, a extensão Retomazera Coletor (em cada perfil do Chrome) manda
+as conversas desde a coleta anterior (WhatsApp Web, Marketplace do Facebook, chat da OLX) para
+POST /api/coleta. Quando as 3 fontes chegam (ou 20 min depois da primeira), este servidor chama o
+Claude Code de linha de comando (claude -p, instruções em analise_prompt.md), que lê os arquivos e
+grava coletas/AAAA-MM-DD/resultado.json — daí sai a lista de quem chamar hoje.
 
 Este servidor:
 - guarda a lista em lembretes/AAAA-MM-DD.json (no PC);
@@ -19,6 +21,8 @@ import base64
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -308,6 +312,91 @@ def gerar_texto(data):
         f.write("\n".join(linhas))
 
 
+# --------------------------------------------------------------------------- análise pelo Claude Code
+ESPERA_FONTES_S = 20 * 60      # espera as outras fontes até 20 min depois da primeira
+ANALISE_TIMEOUT_S = 20 * 60
+_analise = {"rodando": False, "timer": None, "lock": threading.Lock()}
+
+
+def claude_exe():
+    return shutil.which("claude") or os.path.expanduser(r"~\.local\bin\claude.exe")
+
+
+def ja_analisada(data):
+    # True se o resultado do dia é mais novo que a última coleta recebida.
+    coletas = coletas_do_dia(data)
+    if not coletas:
+        return True
+    ultima = max((c.get("coletadoEm") or 0) for c in coletas.values())
+    try:
+        with open(os.path.join(PASTA_DIAS, data + ".json"), encoding="utf-8") as f:
+            return (json.load(f).get("geradoEm") or 0) >= ultima
+    except (OSError, ValueError):
+        return False
+
+
+def agendar_analise(data):
+    # Chamado a cada coleta recebida: analisa já se as 3 fontes chegaram; senão, em até 20 min.
+    coletas = coletas_do_dia(data)
+    completas = all(f in coletas for f in NOMES_FONTES)
+    primeira = min((c.get("coletadoEm") or 0) for c in coletas.values()) / 1000
+    atraso = 30 if completas else max(30, ESPERA_FONTES_S - (time.time() - primeira))
+    with _analise["lock"]:
+        if _analise["timer"]:
+            _analise["timer"].cancel()
+        t = threading.Timer(atraso, analisar, args=(data,))
+        t.daemon = True
+        _analise["timer"] = t
+        t.start()
+    print(f"[análise] {data}: {'todas as fontes chegaram' if completas else 'esperando as outras fontes'}; roda em {int(atraso)} s")
+
+
+def analisar(data, notificar=True, forcar=False):
+    # Roda `claude -p` com analise_prompt.md, lê o resultado.json e publica (Gist + push).
+    with _analise["lock"]:
+        if _analise["rodando"]:
+            print("[análise] já tem uma rodando")
+            return False
+        if not forcar and ja_analisada(data):
+            print(f"[análise] {data} já analisada")
+            return False
+        _analise["rodando"] = True
+    pasta = os.path.join(PASTA_COLETAS, data)
+    saida = os.path.join(pasta, "resultado.json")
+    try:
+        with open(os.path.join(BASE_DIR, "analise_prompt.md"), encoding="utf-8") as f:
+            prompt = f.read().replace("{DATA}", data)
+        if os.path.exists(saida):
+            os.remove(saida)
+        cmd = [claude_exe(), "-p", "--allowedTools", "Read", "Write", "Bash(python:*)", "Bash(python -X utf8:*)",
+               "--output-format", "text"]
+        print(f"[análise] {data}: chamando o Claude Code…")
+        inicio = time.time()
+        r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           cwd=BASE_DIR, timeout=ANALISE_TIMEOUT_S, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        with open(os.path.join(pasta, "analise.log"), "w", encoding="utf-8") as f:
+            f.write(f"código {r.returncode} em {time.time() - inicio:.0f} s\n\n--- saída ---\n{r.stdout}\n--- erros ---\n{r.stderr}")
+        if not os.path.exists(saida):
+            raise RuntimeError(f"o Claude não gravou resultado.json (código {r.returncode}; veja coletas/{data}/analise.log)")
+        with open(saida, encoding="utf-8") as f:
+            corpo = json.load(f)
+        corpo["data"] = data
+        dia = salvar_dia(corpo)
+        try:
+            publicar_gist()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[gist] publicar: {exc}")
+        enviados = enviar_push(payload_dia(dia)) if notificar else 0
+        print(f"[análise] {data}: {len(dia['itens'])} cliente(s), push={enviados}, {time.time() - inicio:.0f} s")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[análise] {data}: FALHOU — {exc}")
+        enviar_push({"title": "Retomazera ⚠️", "body": f"A análise de hoje falhou: {str(exc)[:150]}", "tag": "retomazera-erro"}) if notificar else None
+        return False
+    finally:
+        _analise["rodando"] = False
+
+
 # --------------------------------------------------------------------------- laço do Gist
 def processar_gist():
     """Lê push.json (aparelhos inscritos) e responde aos pedidos de teste do celular."""
@@ -438,7 +527,14 @@ class Handler(SimpleHTTPRequestHandler):
             except (ValueError, OSError) as exc:
                 return self._json({"ok": False, "erro": str(exc)}, 400)
             print(f"[coleta] {corpo.get('data')} {corpo.get('fonte')}: {n} conversa(s)" + (f" — ERRO {corpo['erro']}" if corpo.get("erro") else ""))
+            agendar_analise(corpo["data"])
             return self._json({"ok": True, "conversas": n})
+        if path == "/api/analisar":
+            data = str(corpo.get("data") or time.strftime("%Y-%m-%d"))
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data) or not coletas_do_dia(data):
+                return self._json({"ok": False, "erro": "sem coleta nesse dia"}, 400)
+            threading.Thread(target=analisar, args=(data, corpo.get("notificar", True), True), daemon=True).start()
+            return self._json({"ok": True, "iniciada": data})
         if path == "/api/gist":
             token = str(corpo.get("token") or "").strip()
             if not token:
