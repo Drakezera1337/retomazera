@@ -1,7 +1,7 @@
-// Retomazera Coletor — todo dia (padrão 07:00) abre os sites marcados NESTE perfil do Chrome,
-// copia as mensagens desde a coleta automática anterior (madrugada incluída) e manda ao server.py
-// do Retomazera (127.0.0.1:8797/api/coleta), que salva em coletas/AAAA-MM-DD/<fonte>.json.
-// Depois a tarefa do Claude (07:15) só lê esses arquivos.
+// Retomazera Coletor — uma vez por dia, alguns minutos depois que o PC/Chrome é ligado (a partir das
+// 06:00), abre os sites marcados NESTE perfil do Chrome, copia as mensagens desde a coleta automática
+// anterior (madrugada incluída) e manda ao server.py do Retomazera (127.0.0.1:8797/api/coleta), que
+// salva em coletas/AAAA-MM-DD/<fonte>.json. A tarefa do Claude confere a cada 30 min e analisa.
 // Só leitura: nada é enviado nos sites.
 importScripts('extratores.js');
 
@@ -11,7 +11,7 @@ const FONTES = {
   facebook: { nome: 'Facebook', url: 'https://www.facebook.com/marketplace/inbox', padrao: null, func: extrairFacebook },
   olx: { nome: 'OLX', url: 'https://chat.olx.com.br/', padrao: null, func: extrairOlx },
 };
-const PADRAO = { fontes: { whatsapp: false, facebook: false, olx: false }, hora: '07:00', perfil: '',
+const PADRAO = { fontes: { whatsapp: false, facebook: false, olx: false }, horaMin: 6, espera: 3, perfil: '',
   ignorar: ['Pai - Pessoal', 'Mãe', 'Amor', 'Santo Burger', 'Lucian'] };
 
 async function config() {
@@ -19,23 +19,34 @@ async function config() {
   return { ...PADRAO, ...(cfg || {}), fontes: { ...PADRAO.fontes, ...((cfg || {}).fontes || {}) } };
 }
 
-function proximaVez(hora) {
-  const [h, m] = hora.split(':').map(Number);
-  const d = new Date(); d.setSeconds(0, 0); d.setHours(h, m);
-  if (d.getTime() <= Date.now() + 30000) d.setDate(d.getDate() + 1);
-  return d.getTime();
+// ---- quando coletar: 1x por dia, na primeira oportunidade a partir de horaMin, esperando 'espera'
+// minutos depois que o Chrome abriu (dá tempo de o WhatsApp e os sites carregarem).
+async function inicioNavegador() {
+  const { abriuEm } = await chrome.storage.session.get('abriuEm'); // some quando o Chrome fecha
+  if (abriuEm) return abriuEm;
+  const agora = Date.now();
+  await chrome.storage.session.set({ abriuEm: agora });
+  return agora;
 }
-async function agendar() {
-  // a coleta passou da meia-noite para as 07:00 (pega a madrugada): ajusta quem já tinha 23:55 salvo
-  const { cfg } = await chrome.storage.local.get('cfg');
-  if (cfg && !cfg.manha) await chrome.storage.local.set({ cfg: { ...cfg, hora: cfg.hora === '23:55' ? '07:00' : cfg.hora, manha: true } });
+async function verificar() {
   const c = await config();
-  await chrome.alarms.clear('coleta');
-  chrome.alarms.create('coleta', { when: proximaVez(c.hora), periodInMinutes: 1440 });
+  if (!Object.values(c.fontes).some(Boolean) || rodando) return;
+  const agora = new Date();
+  if (agora.getHours() < (c.horaMin ?? 6)) return;
+  const { auto } = await chrome.storage.local.get('auto');
+  const a = auto || {};
+  if (a.dia === hojeIso() && (a.ok || (a.tentativas || 0) >= 3)) return; // já coletou hoje (ou desistiu)
+  if (Date.now() - (await inicioNavegador()) < (c.espera ?? 3) * 60000) return;
+  if (a.dia === hojeIso() && a.ultimaTentativa && Date.now() - a.ultimaTentativa < 20 * 60000) return;
+  coletar('auto');
 }
-chrome.runtime.onInstalled.addListener(agendar);
-chrome.runtime.onStartup.addListener(agendar);
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'coleta') coletar('alarme'); });
+async function iniciar() {
+  await chrome.alarms.clear('coleta'); // alarme antigo (horário fixo)
+  chrome.alarms.create('verificar', { delayInMinutes: 1, periodInMinutes: 1 });
+}
+chrome.runtime.onInstalled.addListener(iniciar);
+chrome.runtime.onStartup.addListener(async () => { await chrome.storage.session.set({ abriuEm: Date.now() }); iniciar(); });
+chrome.alarms.onAlarm.addListener((al) => { if (al.name === 'verificar') verificar(); });
 
 // Pasta da coleta = dia em que ela roda
 function hojeIso() {
@@ -82,7 +93,7 @@ async function coletar(origem) {
   const inicioAnterior = anterior && !anterior.rodando ? anterior.inicio : null;
   const ativas = Object.keys(FONTES).filter((k) => c.fontes[k]);
   await estado({ rodando: true, inicio: Date.now(), data, origem, fontes: {} });
-  let janela = null;
+  let janela = null, algumaOk = false;
   try {
     for (const k of ativas) {
       const f = FONTES[k];
@@ -114,7 +125,7 @@ async function coletar(origem) {
         const resp = await fetch(`${SERVIDOR}/api/coleta`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
         const j = await resp.json().catch(() => ({}));
         const n = (r.conversas || []).length;
-        if (j.ok && !r.erro && origem === 'alarme') await marcarUltima(k, inicioFonte);
+        if (j.ok && !r.erro && origem === 'auto') { await marcarUltima(k, inicioFonte); algumaOk = true; }
         await estado({ fontes: { ...((await chrome.storage.local.get('est')).est.fontes || {}), [k]: r.erro ? `erro: ${r.erro}` : (j.ok ? `${n} conversa(s)` : `servidor: ${j.erro || resp.status}`) } });
       } catch (e) {
         await estado({ fontes: { ...((await chrome.storage.local.get('est')).est.fontes || {}), [k]: `erro: ${String(e.message || e).slice(0, 150)}` } });
@@ -126,6 +137,11 @@ async function coletar(origem) {
     }
   } finally {
     if (janela) await chrome.windows.remove(janela.id).catch(() => {});
+    if (origem === 'auto') {
+      const { auto } = await chrome.storage.local.get('auto');
+      const a = auto && auto.dia === data ? auto : { dia: data, tentativas: 0 };
+      await chrome.storage.local.set({ auto: { dia: data, ok: a.ok || algumaOk, tentativas: (a.tentativas || 0) + 1, ultimaTentativa: Date.now(), feitaEm: algumaOk ? Date.now() : a.feitaEm } });
+    }
     rodando = false;
     await estado({ rodando: false, atual: '', fim: Date.now() });
   }
@@ -134,12 +150,12 @@ async function coletar(origem) {
 chrome.runtime.onMessage.addListener((msg, _s, responder) => {
   if (msg.tipo === 'coletar') { coletar('manual'); responder({ ok: true }); }
   if (msg.tipo === 'salvar') {
-    chrome.storage.local.set({ cfg: msg.cfg }).then(agendar).then(() => responder({ ok: true }));
+    chrome.storage.local.set({ cfg: msg.cfg }).then(iniciar).then(() => responder({ ok: true }));
     return true;
   }
   if (msg.tipo === 'info') {
-    Promise.all([config(), chrome.storage.local.get('est'), chrome.alarms.get('coleta')])
-      .then(([cfg, { est }, alarme]) => responder({ cfg, est: est || {}, proxima: alarme ? alarme.scheduledTime : null }));
+    Promise.all([config(), chrome.storage.local.get(['est', 'auto'])])
+      .then(([cfg, { est, auto }]) => responder({ cfg, est: est || {}, auto: auto || {}, hoje: hojeIso() }));
     return true;
   }
   return false;

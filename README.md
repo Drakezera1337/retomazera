@@ -1,8 +1,9 @@
 # Retomazera 📲
 
-Todo dia às 00h, uma tarefa agendada do Claude (app desktop, no PC) lê as conversas **do dia**
-no WhatsApp Web, no Messenger/Marketplace do Facebook e no chat da OLX (Chrome do PC, só leitura)
-e monta a lista de **quem chamar de novo no dia seguinte para fechar venda**, com a sugestão de mensagem.
+Uma vez por dia, alguns minutos depois que o PC é ligado, a extensão **Retomazera Coletor** (pasta `extension/`,
+em cada perfil do Chrome) copia as mensagens desde a coleta anterior do WhatsApp Web, do Marketplace do Facebook
+e do chat da OLX (só leitura) para `coletas/AAAA-MM-DD/`. A tarefa agendada do Claude confere a cada 30 min
+(`pendente.py`), lê os arquivos e monta a lista de **quem chamar hoje para fechar venda**, com a sugestão de mensagem.
 
 ```
 Tarefa agendada do Claude (00h) ──POST /api/lembretes──> server.py (PC, porta 8797)

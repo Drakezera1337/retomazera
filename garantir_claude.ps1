@@ -1,4 +1,4 @@
-# Retomazera: roda pelo Agendador de Tarefas do Windows às 06:50, antes da coleta (07:00) e da análise (07:15).
+# Retomazera: roda pelo Agendador de Tarefas do Windows ao entrar na conta (1 min depois do logon).
 # Se o app desktop do Claude não estiver aberto, abre. Garante os perfis do Chrome usados pela coleta.
 $log = Join-Path $PSScriptRoot 'garantir_claude.log'
 function Log($m) { Add-Content -Path $log -Value ("{0:dd/MM/yyyy HH:mm:ss} {1}" -f (Get-Date), $m) -Encoding utf8 }
@@ -13,7 +13,7 @@ if ($app) {
     Log 'Claude estava fechado: abrindo.'
 }
 
-# Os dois perfis precisam estar CARREGADOS às 07:00 para a extensão Retomazera Coletor de cada um rodar
+# Os dois perfis precisam estar CARREGADOS para a extensão Retomazera Coletor de cada um rodar
 # (João Luiz = WhatsApp/Facebook; Joao = OLX). --no-startup-window carrega o perfil sem abrir janela;
 # se o perfil já estiver aberto, não faz nada. A própria extensão abre a janela da coleta.
 $chrome = 'C:\Program Files\Google\Chrome\Application\chrome.exe'

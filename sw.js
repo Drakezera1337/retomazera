@@ -1,5 +1,5 @@
 // Retomazera: cache para abrir rápido/offline e notificação diária (enviada pelo server.py do PC).
-const CACHE = 'retomazera-v2';
+const CACHE = 'retomazera-v3';
 const ASSETS = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'sync.js',
   'icon-192.png', 'badge-96.png', 'manifest.webmanifest'];
 

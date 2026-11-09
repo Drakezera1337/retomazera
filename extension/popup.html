@@ -22,7 +22,9 @@
   <label>Nome deste perfil <input type="text" id="perfil" placeholder="ex.: João Luiz"></label>
   <label>Não coletar (nome exato como está salvo, ou telefone; um por linha)
     <textarea id="ignorar" rows="5" style="width:100%;box-sizing:border-box"></textarea></label>
-  <label>Horário da coleta diária <input type="time" id="hora"></label>
+  <label>Coletar a partir das (hora) <input type="number" id="horaMin" min="0" max="23" style="width:60px"></label>
+  <label>Esperar depois de ligar o PC (min) <input type="number" id="espera" min="1" max="30" style="width:60px"></label>
+  <div class="sub">A coleta automática roda 1x por dia, na primeira vez que o PC estiver ligado depois desse horário.</div>
   <button class="verde" id="salvar">Salvar</button>
   <button id="agora">Coletar agora</button>
   <div id="est" class="sub"></div>

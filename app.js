@@ -113,7 +113,7 @@ function telaDia(dia, titulo) {
     const conectar = !NO_PC && !Sync.enabled();
     return `<div class="vazio">${S.carregando ? 'Carregando…' : conectar
       ? 'Conecte ao PC: no PC abra o Retomazera → Ajustes → <b>Mostrar QR code</b>. Aqui: Ajustes → <b>Ler QR do PC</b>.'
-      : 'Ainda não há lista. Ela chega todo dia por volta das 7h30.'}
+      : 'Ainda não há lista. Ela chega todo dia uns minutos depois que o PC é ligado.'}
       ${S.erro ? `<br><br>⚠️ ${esc(S.erro)}` : ''}</div>`;
   }
   const itens = [...(dia.itens || [])];

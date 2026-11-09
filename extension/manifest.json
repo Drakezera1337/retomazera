@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Retomazera Coletor",
-  "version": "2.0",
-  "description": "Todo dia às 07:00 copia as mensagens desde a coleta anterior (WhatsApp Web, Marketplace do Facebook, chat da OLX) para o Retomazera no PC. Só leitura.",
+  "version": "2.1",
+  "description": "Uma vez por dia, ao ligar o PC, copia as mensagens desde a coleta anterior (WhatsApp Web, Marketplace do Facebook, chat da OLX) para o Retomazera no PC. Só leitura.",
   "permissions": ["alarms", "storage", "tabs", "scripting"],
   "host_permissions": [
     "https://web.whatsapp.com/*",
