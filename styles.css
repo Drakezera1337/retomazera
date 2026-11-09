@@ -2,7 +2,7 @@
 :root {
   --verde: #00966e; --verde-esc: #00714f; --fundo: #f3f5f4; --card: #fff; --texto: #1b2420; --suave: #66736d;
   --borda: #dde3e0; --alta: #e0392b; --media: #e88a00; --baixa: #7a8a83;
-  --wpp: #1faa53; --fb: #1877f2; --olx: #6e0ad6;
+  --wpp: #1faa53; --fb: #1877f2; --olx: #6e0ad6; --ig: #d62976;
 }
 @media (prefers-color-scheme: dark) {
   :root { --fundo: #0f1513; --card: #18211e; --texto: #e6ece9; --suave: #9aa8a2; --borda: #2a3632; }
@@ -28,7 +28,7 @@ h2 { font-size: 16px; margin: 0 0 8px; }
 .contagem { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; border-radius: 99px; padding: 2px 9px; font-size: 12px; font-weight: 600;
   background: var(--borda); color: var(--texto); border: 0; }
-.chip.wpp { background: var(--wpp); color: #fff; } .chip.fb { background: var(--fb); color: #fff; } .chip.olx { background: var(--olx); color: #fff; }
+.chip.wpp { background: var(--wpp); color: #fff; } .chip.fb { background: var(--fb); color: #fff; } .chip.olx { background: var(--olx); color: #fff; } .chip.ig { background: var(--ig); color: #fff; }
 .chip.alta { background: var(--alta); color: #fff; } .chip.media { background: var(--media); color: #fff; } .chip.baixa { background: var(--baixa); color: #fff; }
 .item { background: var(--card); border: 1px solid var(--borda); border-left: 5px solid var(--baixa); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
 .item.alta { border-left-color: var(--alta); } .item.media { border-left-color: var(--media); }

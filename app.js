@@ -66,7 +66,7 @@ function alternarFeito(id) {
 }
 
 // ---------------------------------------------------------------- telas
-const CANAIS = { whatsapp: ['wpp', 'WhatsApp'], facebook: ['fb', 'Facebook'], olx: ['olx', 'OLX'] };
+const CANAIS = { whatsapp: ['wpp', 'WhatsApp'], facebook: ['fb', 'Facebook'], olx: ['olx', 'OLX'], instagram: ['ig', 'Instagram'] };
 const PRIOR = { alta: 'Alta', media: 'Média', média: 'Média', baixa: 'Baixa' };
 
 function linkConversa(x) {
@@ -82,6 +82,7 @@ function linkConversa(x) {
   if (/^https:\/\//.test(contato)) return contato;
   if (canal === 'olx') return 'https://www.olx.com.br/chat';
   if (canal === 'facebook') return 'https://www.facebook.com/messages';
+  if (canal === 'instagram') return 'https://www.instagram.com/direct/inbox/';
   return '';
 }
 

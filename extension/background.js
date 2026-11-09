@@ -10,8 +10,9 @@ const FONTES = {
   whatsapp: { nome: 'WhatsApp', url: 'https://web.whatsapp.com/', padrao: 'https://web.whatsapp.com/*', func: extrairWhatsapp },
   facebook: { nome: 'Facebook', url: 'https://www.facebook.com/marketplace/inbox', padrao: null, func: extrairFacebook },
   olx: { nome: 'OLX', url: 'https://chat.olx.com.br/', padrao: null, func: extrairOlx },
+  instagram: { nome: 'Instagram', url: 'https://www.instagram.com/direct/inbox/', padrao: null, func: extrairInstagram },
 };
-const PADRAO = { fontes: { whatsapp: false, facebook: false, olx: false }, horaMin: 6, espera: 3, perfil: '',
+const PADRAO = { fontes: { whatsapp: false, facebook: false, olx: false, instagram: false }, horaMin: 6, espera: 3, perfil: '',
   ignorar: ['Pai - Pessoal', 'Mãe', 'Amor', 'Santo Burger', 'Lucian'] };
 
 async function config() {
@@ -121,7 +122,7 @@ async function coletar(origem) {
         const inicioFonte = Date.now();
         const [res] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func, args: [desde, c.ignorar || []] });
         const r = (res && res.result) || { erro: 'sem resposta do extrator', conversas: [] };
-        const corpo = { fonte: k, data, perfil: c.perfil, desde, ate: inicioFonte, coletadoEm: Date.now(), ...r };
+        const corpo = { fonte: k, data, perfil: c.perfil, lote: ativas, desde, ate: inicioFonte, coletadoEm: Date.now(), ...r };
         const resp = await fetch(`${SERVIDOR}/api/coleta`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
         const j = await resp.json().catch(() => ({}));
         const n = (r.conversas || []).length;

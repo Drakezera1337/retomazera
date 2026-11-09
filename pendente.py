@@ -4,7 +4,7 @@ Imprime:
   PENDENTE AAAA-MM-DD   → há coleta desse dia ainda não analisada (e já completa)
   NADA: <motivo>        → nada a fazer agora
 
-"Completa" = chegaram as 3 fontes (whatsapp, facebook, olx), ou a primeira chegou há mais de
+"Completa" = chegaram todas as fontes que os perfis do Chrome coletam, ou a primeira chegou há mais de
 20 min (um perfil do Chrome pode estar fechado: analisa com o que tiver).
 """
 import json
@@ -13,7 +13,17 @@ import sys
 import time
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-FONTES = ("whatsapp", "facebook", "olx")
+def fontes_esperadas():
+    # cada perfil do Chrome informa ao servidor quais fontes coleta (dados.json → fontes_perfis)
+    try:
+        with open(os.path.join(BASE, "dados.json"), encoding="utf-8") as f:
+            lotes = json.load(f).get("fontes_perfis") or {}
+    except (OSError, ValueError):
+        lotes = {}
+    return sorted({x for lista in lotes.values() for x in lista}) or ["whatsapp", "facebook", "olx"]
+
+
+FONTES = ("whatsapp", "facebook", "olx", "instagram")
 
 
 def main():
@@ -37,7 +47,7 @@ def main():
         gerado = 0
     if gerado and gerado >= ultima:
         return f"NADA: a coleta de hoje já foi analisada ({time.strftime('%H:%M', time.localtime(gerado))})"
-    faltam = [f for f in FONTES if f not in coletas]
+    faltam = [f for f in fontes_esperadas() if f not in coletas]
     if faltam and time.time() - primeira < 20 * 60:
         return f"NADA: esperando {', '.join(faltam)} (coleta em andamento)"
     if time.time() - ultima < 60:

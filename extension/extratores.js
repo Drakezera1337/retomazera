@@ -359,3 +359,93 @@ async function extrairWhatsapp(desde, ignorar = [], limite = 60) {
   try { setValor.call(box, ''); box.dispatchEvent(new Event('input', { bubbles: true })); } catch { /* ok */ }
   return { conversas };
 }
+
+// ------------------------------------------------------------------ Instagram (Direct da loja)
+// Lista: abas Primary/General/Pedidos; cada linha termina com "· 5 min" / "· 9h" / "· 3 d" / "· 2 sem".
+// Na conversa o Instagram não mostra a hora de cada mensagem: vai só o lado (João/cliente) e o texto,
+// e o rótulo da lista ("última atividade") diz quando foi a última.
+async function extrairInstagram(desde, ignorar = []) {
+  const normal = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const termos = (ignorar || []).map(normal).filter(Boolean);
+  const ignorado = (nome) => termos.includes(normal(nome));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const esperar = async (fn, ms = 20000) => { const fim = Date.now() + ms; while (Date.now() < fim) { const v = fn(); if (v) return v; await sleep(400); } return null; };
+  // "5 min" → agora − 5 min; para "3 d"/"2 sem" considera o fim do intervalo (folga para não perder ninguém)
+  const UN = { min: 60e3, h: 3600e3, d: 864e5, sem: 7 * 864e5 };
+  const quando = (r) => {
+    r = (r || '').trim().toLowerCase();
+    if (r === 'agora') return Date.now();
+    const m = r.match(/^(\d+)\s*(min|h|d|sem)$/);
+    return m ? Date.now() - Number(m[1]) * UN[m[2]] : null;
+  };
+  const folga = (r) => { const m = (r || '').match(/(min|h|d|sem)$/); return m ? UN[m[1]] : 0; };
+  const ehRotulo = (s) => /^(\d+\s*(min|h|d|sem)|agora)$/i.test((s || '').trim());
+
+  const linhasLista = () => {
+    const vistos = new Set(), lista = [];
+    for (const el of document.querySelectorAll('div[role="button"], a[role="link"]')) {
+      if (el.closest('[role=main]') && !el.closest('[role=navigation]')) continue;
+      const t = (el.innerText || '').trim();
+      if (!t || t.length > 300) continue;
+      // tira o selo de status que aparece antes do nome ("Online", "Ativo agora"...)
+      const l = t.split('\n').map((s) => s.trim()).filter((s) => s && s !== '·' && !/^(online|ativo agora|ativa agora|active now|ativo\(a\) h[aá].*)$/i.test(s));
+      const rot = l[l.length - 1];
+      if (l.length < 2 || !ehRotulo(rot) || vistos.has(l[0] + '|' + l[1])) continue;
+      vistos.add(l[0] + '|' + l[1]);
+      lista.push({ el, nome: l[0], ultima: l[1], rot });
+    }
+    return lista;
+  };
+  if (!await esperar(() => linhasLista().length || document.querySelector('[role=navigation]'), 30000)) {
+    return { erro: 'inbox não carregou (Instagram deslogado?)', conversas: [] };
+  }
+  await sleep(2000);
+
+  const conversas = [], feitos = new Set();
+  const abas = ['Primary', 'Principal', 'General', 'Geral', 'Pedidos', 'Solicitações', 'Requests'];
+  for (const nomeAba of abas) {
+    const aba = [...document.querySelectorAll('[role=tab], div[role=button], a')].find((e) => (e.innerText || '').trim() === nomeAba);
+    if (!aba) continue;
+    aba.click();
+    await sleep(2500);
+    const alvos = linhasLista().filter((x) => {
+      const q = quando(x.rot);
+      return q !== null && q + folga(x.rot) >= desde && !ignorado(x.nome) && !feitos.has(x.nome + '|' + x.ultima);
+    }).slice(0, 40);
+    for (const x of alvos) {
+      feitos.add(x.nome + '|' + x.ultima);
+      try {
+        const antes = location.pathname;
+        x.el.click();
+        await esperar(() => location.pathname !== antes && location.pathname.includes('/direct/t/'), 10000);
+        // espera as mensagens desta conversa aparecerem
+        const arts = await esperar(() => {
+          const a = [...document.querySelectorAll('[role=article]')].filter((e) => !e.closest('[role=navigation]'));
+          return a.length ? a : null;
+        }, 12000);
+        await sleep(2000);
+        const lista = [...document.querySelectorAll('[role=article]')].filter((e) => !e.closest('[role=navigation]'));
+        if (!arts || !lista.length) { conversas.push({ nome: x.nome, contato: location.href, rotulo: x.rot, aba: nomeAba, mensagens: [], aviso: 'conversa não abriu' }); continue; }
+        // área da conversa = da borda direita da lista de conversas até o fim da janela (o meio separa João/cliente)
+        const navLista = document.querySelector('[role=navigation][aria-label="Lista de tópicos"], [role=navigation][aria-label="Thread list"]');
+        const pr = { left: navLista ? navLista.getBoundingClientRect().right : 0, right: window.innerWidth };
+        const perfil = (document.querySelector('[role=main] a[aria-label*="perfil de"], [role=main] a[aria-label*="profile page of"]')?.getAttribute('aria-label') || '').split(' ').pop();
+        const msgs = [];
+        for (const a of lista) {
+          let texto = (a.innerText || '').replace(/Ver transcrição/g, '').trim();
+          if (/^\d+:\d{2}$/.test(texto) || a.querySelector('[aria-label*="audio" i], [aria-label*="áudio" i]')) texto = '[áudio]';
+          else if (!texto && a.querySelector('img, video')) texto = '[foto/vídeo]';
+          if (!texto) continue;
+          const b = (a.querySelector('[role=presentation]') || a).getBoundingClientRect();
+          const eu = (b.left + b.right) / 2 > (pr.left + pr.right) / 2;
+          msgs.push({ data: '', hora: '', eu, autor: eu ? 'João' : x.nome, texto: texto.slice(0, 1500) });
+        }
+        conversas.push({ nome: x.nome, contato: location.href, perfil: perfil || '', rotulo: x.rot, aba: nomeAba, mensagens: msgs.slice(-60) });
+      } catch (e) {
+        conversas.push({ nome: x.nome, contato: '', mensagens: [], aviso: 'erro: ' + String(e).slice(0, 120) });
+      }
+      await sleep(1000);
+    }
+  }
+  return { conversas, aviso: 'No Instagram não aparece a hora de cada mensagem: "última atividade" é o tempo desde a última mensagem da conversa.' };
+}

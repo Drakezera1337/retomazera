@@ -38,7 +38,7 @@ DADOS = os.path.join(BASE_DIR, "dados.json")          # token/gist/inscrição d
 PASTA_DIAS = os.path.join(BASE_DIR, "lembretes")      # histórico local (fora do git)
 PASTA_COLETAS = os.path.join(BASE_DIR, "coletas")     # mensagens copiadas pela extensão (fora do git)
 PASTA_SEMANAS = os.path.join(BASE_DIR, "semanas")     # resumos semanais (fora do git)
-NOMES_FONTES = {"whatsapp": "WhatsApp", "facebook": "Facebook", "olx": "OLX"}
+NOMES_FONTES = {"whatsapp": "WhatsApp", "facebook": "Facebook", "olx": "OLX", "instagram": "Instagram"}
 SITE_PUBLICO = "https://drakezera1337.github.io/retomazera/"
 PUSH_PEM = os.path.join(BASE_DIR, "push_vapid.pem")
 PUSH_CONTATO = "mailto:276884055+Drakezera1337@users.noreply.github.com"
@@ -274,6 +274,11 @@ def salvar_coleta(corpo):
     os.makedirs(pasta, exist_ok=True)
     with open(os.path.join(pasta, fonte + ".json"), "w", encoding="utf-8") as f:
         json.dump(corpo, f, ensure_ascii=False, indent=1)
+    # cada perfil do Chrome diz quais fontes coleta: a análise espera a soma de todos
+    if isinstance(corpo.get("lote"), list):
+        lotes = ler_dados().get("fontes_perfis", {})
+        lotes[str(corpo.get("perfil") or "?")] = [f for f in corpo["lote"] if f in NOMES_FONTES]
+        gravar_dados(fontes_perfis=lotes)
     gerar_texto(data)
     return len(corpo.get("conversas") or [])
 
@@ -351,6 +356,12 @@ def chamar_claude(prompt, arquivo_log):
     return r
 
 
+def fontes_esperadas():
+    lotes = ler_dados().get("fontes_perfis") or {}
+    esperadas = {f for lista in lotes.values() for f in lista}
+    return esperadas or {"whatsapp", "facebook", "olx"}
+
+
 def ja_analisada(data):
     # True se o resultado do dia é mais novo que a última coleta recebida.
     coletas = coletas_do_dia(data)
@@ -367,7 +378,7 @@ def ja_analisada(data):
 def agendar_analise(data):
     # Chamado a cada coleta recebida: analisa já se as 3 fontes chegaram; senão, em até 20 min.
     coletas = coletas_do_dia(data)
-    completas = all(f in coletas for f in NOMES_FONTES)
+    completas = all(f in coletas for f in fontes_esperadas())
     primeira = min((c.get("coletadoEm") or 0) for c in coletas.values()) / 1000
     atraso = 30 if completas else max(30, ESPERA_FONTES_S - (time.time() - primeira))
     with _analise["lock"]:

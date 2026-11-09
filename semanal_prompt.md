@@ -26,7 +26,7 @@ SAÍDA: grave com a ferramenta Write o arquivo semanas\{CHAVE}.json (na pasta at
   "feito": ["o que o João fez na semana, em itens curtos (vendas fechadas, clientes retomados, compras de estoque)"],
   "deu_certo": ["o que funcionou e por quê, ligando aos padrões de venda dele (foto/vídeo, parcelamento, troca, entrega, retomada rápida...)"],
   "ficou_pra_tras": [
-    {"nome": "...", "canal": "whatsapp" | "facebook" | "olx", "contato": "telefone só com dígitos ou URL", "produto": "...",
+    {"nome": "...", "canal": "whatsapp" | "facebook" | "olx" | "instagram", "contato": "telefone só com dígitos ou URL", "produto": "...",
      "motivo": "por que ainda vale chamar", "mensagem": "sugestão de mensagem curta no estilo do João"}
   ],
   "recomendacoes": ["2 a 4 ações concretas para a próxima semana (ex.: estoque a repor pela demanda que apareceu, horários/canais que mais venderam, retomadas a fazer)"]
