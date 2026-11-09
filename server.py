@@ -29,6 +29,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import date, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("RETOMAZERA_PORT", "8797"))
@@ -36,6 +37,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DADOS = os.path.join(BASE_DIR, "dados.json")          # token/gist/inscrição do PC (fora do git)
 PASTA_DIAS = os.path.join(BASE_DIR, "lembretes")      # histórico local (fora do git)
 PASTA_COLETAS = os.path.join(BASE_DIR, "coletas")     # mensagens copiadas pela extensão (fora do git)
+PASTA_SEMANAS = os.path.join(BASE_DIR, "semanas")     # resumos semanais (fora do git)
 NOMES_FONTES = {"whatsapp": "WhatsApp", "facebook": "Facebook", "olx": "OLX"}
 SITE_PUBLICO = "https://drakezera1337.github.io/retomazera/"
 PUSH_PEM = os.path.join(BASE_DIR, "push_vapid.pem")
@@ -77,6 +79,20 @@ def dias_locais(limite=DIAS_NO_GIST):
     for n in nomes[:limite]:
         try:
             with open(os.path.join(PASTA_DIAS, n), encoding="utf-8") as f:
+                saida.append(json.load(f))
+        except (OSError, ValueError):
+            pass
+    return saida
+
+
+def semanas_locais(limite=8):
+    if not os.path.isdir(PASTA_SEMANAS):
+        return []
+    nomes = sorted((n for n in os.listdir(PASTA_SEMANAS) if re.fullmatch(r"\d{4}-S\d{2}\.json", n)), reverse=True)
+    saida = []
+    for n in nomes[:limite]:
+        try:
+            with open(os.path.join(PASTA_SEMANAS, n), encoding="utf-8") as f:
                 saida.append(json.load(f))
         except (OSError, ValueError):
             pass
@@ -136,7 +152,7 @@ def json_do_arquivo(arquivos, nome, padrao):
 def publicar_gist():
     if not gist_cfg():
         return False
-    corpo = {"dias": dias_locais(), "ts": int(time.time() * 1000)}
+    corpo = {"dias": dias_locais(), "semanas": semanas_locais(), "ts": int(time.time() * 1000)}
     gist_request("PATCH", {"files": {"lembretes.json": {"content": json.dumps(corpo, ensure_ascii=False)}}})
     return True
 
@@ -322,6 +338,19 @@ def claude_exe():
     return shutil.which("claude") or os.path.expanduser(r"~\.local\bin\claude.exe")
 
 
+def chamar_claude(prompt, arquivo_log):
+    """Roda `claude -p` na pasta do Retomazera, só com leitura/gravação de arquivos e python."""
+    cmd = [claude_exe(), "-p", "--allowedTools", "Read", "Write", "Grep", "Glob", "Bash(python:*)", "Bash(python -X utf8:*)",
+           "--output-format", "text"]
+    inicio = time.time()
+    r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       cwd=BASE_DIR, timeout=ANALISE_TIMEOUT_S, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    os.makedirs(os.path.dirname(arquivo_log), exist_ok=True)
+    with open(arquivo_log, "w", encoding="utf-8") as f:
+        f.write(f"código {r.returncode} em {time.time() - inicio:.0f} s\n\n--- saída ---\n{r.stdout}\n--- erros ---\n{r.stderr}")
+    return r
+
+
 def ja_analisada(data):
     # True se o resultado do dia é mais novo que a última coleta recebida.
     coletas = coletas_do_dia(data)
@@ -368,14 +397,9 @@ def analisar(data, notificar=True, forcar=False):
             prompt = f.read().replace("{DATA}", data)
         if os.path.exists(saida):
             os.remove(saida)
-        cmd = [claude_exe(), "-p", "--allowedTools", "Read", "Write", "Bash(python:*)", "Bash(python -X utf8:*)",
-               "--output-format", "text"]
         print(f"[análise] {data}: chamando o Claude Code…")
         inicio = time.time()
-        r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                           cwd=BASE_DIR, timeout=ANALISE_TIMEOUT_S, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        with open(os.path.join(pasta, "analise.log"), "w", encoding="utf-8") as f:
-            f.write(f"código {r.returncode} em {time.time() - inicio:.0f} s\n\n--- saída ---\n{r.stdout}\n--- erros ---\n{r.stderr}")
+        r = chamar_claude(prompt, os.path.join(pasta, "analise.log"))
         if not os.path.exists(saida):
             raise RuntimeError(f"o Claude não gravou resultado.json (código {r.returncode}; veja coletas/{data}/analise.log)")
         with open(saida, encoding="utf-8") as f:
@@ -392,6 +416,68 @@ def analisar(data, notificar=True, forcar=False):
     except Exception as exc:  # noqa: BLE001
         print(f"[análise] {data}: FALHOU — {exc}")
         enviar_push({"title": "Retomazera ⚠️", "body": f"A análise de hoje falhou: {str(exc)[:150]}", "tag": "retomazera-erro"}) if notificar else None
+        return False
+    finally:
+        _analise["rodando"] = False
+        # primeira análise de uma semana nova: faz o resumo da semana que passou
+        try:
+            ini, _fim, chave = semana_anterior()
+            if notificar and not os.path.exists(os.path.join(PASTA_SEMANAS, chave + ".json")):
+                analisar_semana()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[semana] {exc}")
+
+
+def semana_anterior(hoje=None):
+    """(início, fim, chave) da semana anterior (segunda a domingo). Chave: AAAA-Snn (semana ISO)."""
+    hoje = hoje or date.today()
+    ini = hoje - timedelta(days=hoje.weekday() + 7)
+    fim = ini + timedelta(days=6)
+    ano, sem, _ = ini.isocalendar()
+    return ini.isoformat(), fim.isoformat(), f"{ano}-S{sem:02d}"
+
+
+def analisar_semana(notificar=True, forcar=False):
+    ini, fim, chave = semana_anterior()
+    arquivo = os.path.join(PASTA_SEMANAS, chave + ".json")
+    with _analise["lock"]:
+        if _analise["rodando"] or (os.path.exists(arquivo) and not forcar):
+            return False
+        _analise["rodando"] = True
+    try:
+        os.makedirs(PASTA_SEMANAS, exist_ok=True)
+        d0 = date.fromisoformat(ini)
+        dias = [(d0 + timedelta(days=i)).isoformat() for i in range(7)]
+        com_lista = [d for d in dias if os.path.exists(os.path.join(PASTA_DIAS, d + ".json"))]
+        with open(os.path.join(BASE_DIR, "semanal_prompt.md"), encoding="utf-8") as f:
+            prompt = (f.read().replace("{INICIO}", ini).replace("{FIM}", fim).replace("{CHAVE}", chave)
+                      .replace("{DIAS}", ", ".join(com_lista) or "nenhuma lista diária nessa semana"))
+        if os.path.exists(arquivo):
+            os.remove(arquivo)
+        print(f"[semana] {chave} ({ini} a {fim}): chamando o Claude Code…")
+        inicio = time.time()
+        r = chamar_claude(prompt, os.path.join(PASTA_SEMANAS, chave + ".log"))
+        if not os.path.exists(arquivo):
+            raise RuntimeError(f"o Claude não gravou semanas/{chave}.json (código {r.returncode})")
+        with open(arquivo, encoding="utf-8") as f:
+            rel = json.load(f)
+        rel.update({"semana": chave, "inicio": ini, "fim": fim, "geradoEm": int(time.time() * 1000)})
+        with open(arquivo, "w", encoding="utf-8") as f:
+            json.dump(rel, f, ensure_ascii=False, indent=1)
+        try:
+            publicar_gist()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[gist] publicar: {exc}")
+        n = 0
+        if notificar:
+            br = lambda iso: "/".join(reversed(iso.split("-")[1:]))
+            n = enviar_push({"title": f"📊 Resumo da semana {br(ini)} a {br(fim)}",
+                             "body": str(rel.get("titulo") or "Toque para ver como foi a semana.")[:180],
+                             "tag": "retomazera-" + chave, "data": "semana/" + chave})
+        print(f"[semana] {chave}: pronto em {time.time() - inicio:.0f} s, push={n}")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[semana] {chave}: FALHOU — {exc}")
         return False
     finally:
         _analise["rodando"] = False
@@ -473,7 +559,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/status":
             return self._json(self.status_json())
         if path == "/api/lembretes":
-            return self._json({"dias": dias_locais(), "ts": int(time.time() * 1000)})
+            return self._json({"dias": dias_locais(), "semanas": semanas_locais(), "ts": int(time.time() * 1000)})
         if path == "/api/coletas":
             data = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("data", [""])[0]
             return self._json({f: {"conversas": len(c.get("conversas") or []), "erro": c.get("erro"), "coletadoEm": c.get("coletadoEm")}
@@ -486,7 +572,7 @@ class Handler(SimpleHTTPRequestHandler):
             b64 = urllib.parse.quote(base64.urlsafe_b64encode(dados).decode().rstrip("="))
             return self._json({"url": f"{SITE_PUBLICO}#config={b64}"})
         if (path.lower().endswith(self.PRIVADOS) or "/." in path or path.startswith("/lembretes/")
-                or path.startswith("/coletas/") or path in ("/dados.json",)):
+                or path.startswith("/coletas/") or path.startswith("/semanas/") or path in ("/dados.json",)):
             return self._json({"erro": "não encontrado"}, 404)
         return super().do_GET()
 
@@ -529,6 +615,9 @@ class Handler(SimpleHTTPRequestHandler):
             print(f"[coleta] {corpo.get('data')} {corpo.get('fonte')}: {n} conversa(s)" + (f" — ERRO {corpo['erro']}" if corpo.get("erro") else ""))
             agendar_analise(corpo["data"])
             return self._json({"ok": True, "conversas": n})
+        if path == "/api/semanal":
+            threading.Thread(target=analisar_semana, args=(corpo.get("notificar", True), True), daemon=True).start()
+            return self._json({"ok": True, "semana": semana_anterior()[2]})
         if path == "/api/analisar":
             data = str(corpo.get("data") or time.strftime("%Y-%m-%d"))
             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data) or not coletas_do_dia(data):

@@ -7,7 +7,7 @@ const K = { cache: 'retomazera:cache', feitos: 'retomazera:feitos', push: 'retom
 const lerJSON = (k, p) => { try { return JSON.parse(localStorage.getItem(k)) ?? p; } catch { return p; } };
 const gravarJSON = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem storage */ } };
 
-const S = { dias: [], ts: 0, status: null, carregando: false, erro: '' };
+const S = { dias: [], semanas: [], ts: 0, status: null, carregando: false, erro: '' };
 
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.hidden = false;
@@ -39,12 +39,12 @@ async function carregar() {
   try {
     if (NO_PC) {
       const r = await api('lembretes');
-      S.dias = r.dias || []; S.ts = r.ts;
+      S.dias = r.dias || []; S.semanas = r.semanas || []; S.ts = r.ts;
       S.status = await api('status');
     } else if (Sync.enabled()) {
       const { 'lembretes.json': l } = await Sync.ler({ 'lembretes.json': { dias: [] } });
-      S.dias = l.dias || []; S.ts = l.ts || 0;
-      gravarJSON(K.cache, { dias: S.dias, ts: S.ts });
+      S.dias = l.dias || []; S.semanas = l.semanas || []; S.ts = l.ts || 0;
+      gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, ts: S.ts });
     }
   } catch (err) {
     S.erro = err.message || String(err);
@@ -140,6 +140,34 @@ function telaHistorico() {
   return `<h1>Dias anteriores</h1><p class="sub">Últimos ${S.dias.length} dias</p>
     <div class="painel dias" style="padding:0">${S.dias.map((d) => `<a href="#/dia/${esc(d.data)}">
       <span>${esc(dataBR(d.data))}</span><b>${(d.itens || []).length} cliente(s)</b></a>`).join('')}</div>`;
+}
+
+// ---------------------------------------------------------------- resumo semanal
+const brl = (v) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+function lista(titulo, itens) {
+  return itens && itens.length ? `<div class="painel"><h2>${titulo}</h2><ul style="margin:0;padding-left:18px">${itens.map((t) => `<li style="margin:4px 0">${esc(t)}</li>`).join('')}</ul></div>` : '';
+}
+function telaSemana(chave) {
+  if (!S.semanas.length) {
+    return `<h1>Resumo da semana</h1><div class="vazio">${S.carregando ? 'Carregando…' : 'O primeiro resumo chega na segunda-feira, logo depois da lista do dia.'}</div>`;
+  }
+  const w = (chave && S.semanas.find((x) => x.semana === chave)) || S.semanas[0];
+  const n = w.numeros || {};
+  const outras = S.semanas.filter((x) => x.semana !== w.semana);
+  const difVendas = n.vendas_semana_anterior != null ? ` <span class="sub">(anterior: ${n.vendas_semana_anterior})</span>` : '';
+  return `<h1>Semana ${esc(dataBR(w.inicio, false))} a ${esc(dataBR(w.fim, false))}</h1>
+    <p class="sub">${esc(w.titulo || '')}</p>
+    <div class="painel">
+      <p style="margin:0"><b>${n.vendas ?? 0}</b> vendas${difVendas} · faturamento <b>${brl(n.faturamento)}</b></p>
+      <p style="margin:6px 0 0">Lucro <b>${brl(n.lucro)}</b>${n.lucro_semana_anterior != null ? ` <span class="sub">(anterior: ${brl(n.lucro_semana_anterior)})</span>` : ''} · ${n.compras ?? 0} compras</p>
+      ${n.clientes_sugeridos ? `<p style="margin:6px 0 0">Clientes sugeridos: ${n.clientes_sugeridos} · retomados ${n.retomados ?? 0} · convertidos ${n.convertidos ?? 0} · ficaram para trás ${n.ficaram_para_tras ?? 0}</p>` : ''}
+    </div>
+    ${w.resumo ? `<div class="painel resumo">${esc(w.resumo)}</div>` : ''}
+    ${lista('✅ O que foi feito', w.feito)}
+    ${lista('🏆 O que deu certo', w.deu_certo)}
+    ${(w.ficou_pra_tras || []).length ? `<h2 style="margin:14px 0 8px">⏳ Ficou para trás</h2>${w.ficou_pra_tras.map((x, i) => cartao({ ...x, id: `${w.semana}-${i}`, prioridade: 'media' })).join('')}` : ''}
+    ${lista('🎯 Para a próxima semana', w.recomendacoes)}
+    ${outras.length ? `<div class="painel dias" style="padding:0">${outras.map((x) => `<a href="#/semana/${esc(x.semana)}"><span>${esc(dataBR(x.inicio, false))} a ${esc(dataBR(x.fim, false))}</span><b>${x.numeros?.vendas ?? 0} vendas</b></a>`).join('')}</div>` : ''}`;
 }
 
 // ---------------------------------------------------------------- ajustes
@@ -370,7 +398,8 @@ function rotear() {
   if (m) {
     const dia = S.dias.find((d) => d.data === m[1]);
     html = telaDia(dia, dia ? `Lista de ${dataBR(dia.data, false)}` : 'Dia não encontrado'); aba = 'historico';
-  } else if (h.startsWith('#/historico')) { html = telaHistorico(); aba = 'historico'; }
+  } else if (h.startsWith('#/semana')) { html = telaSemana(h.split('/')[2]); aba = 'semana'; }
+  else if (h.startsWith('#/historico')) { html = telaHistorico(); aba = 'historico'; }
   else if (h.startsWith('#/ajustes')) { html = telaAjustes(); aba = 'ajustes'; }
   else html = telaDia(S.dias[0], 'Chamar hoje');
   $('#view').innerHTML = html;
@@ -381,7 +410,8 @@ function rotear() {
 document.addEventListener('click', async (e) => {
   const c = e.target.closest('[data-copiar]');
   if (c) {
-    const x = S.dias.flatMap((d) => d.itens || []).find((i) => i.id === c.dataset.copiar);
+    const semanais = S.semanas.flatMap((w) => (w.ficou_pra_tras || []).map((y, i) => ({ ...y, id: `${w.semana}-${i}` })));
+    const x = S.dias.flatMap((d) => d.itens || []).concat(semanais).find((i) => i.id === c.dataset.copiar);
     try { await navigator.clipboard.writeText(x?.mensagem || ''); toast('Mensagem copiada'); } catch { toast('Não consegui copiar'); }
     return;
   }
@@ -403,7 +433,7 @@ if (location.hash.startsWith('#config=')) {
 }
 if (!NO_PC) {
   const cache = lerJSON(K.cache, null);
-  if (cache?.dias) { S.dias = cache.dias; S.ts = cache.ts; }
+  if (cache?.dias) { S.dias = cache.dias; S.semanas = cache.semanas || []; S.ts = cache.ts; }
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 rotear();
