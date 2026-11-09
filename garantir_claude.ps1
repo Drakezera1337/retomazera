@@ -1,6 +1,5 @@
 # Retomazera: roda pelo Agendador de Tarefas do Windows às 23:50, antes da tarefa das 00h do Claude.
-# Se o app desktop do Claude não estiver aberto, abre. Se o Chrome não estiver aberto, abre os perfis
-# usados pela rotina (João Luiz = WhatsApp/Facebook; Joao = OLX).
+# Se o app desktop do Claude não estiver aberto, abre. Garante os perfis do Chrome usados pela coleta.
 $log = Join-Path $PSScriptRoot 'garantir_claude.log'
 function Log($m) { Add-Content -Path $log -Value ("{0:dd/MM/yyyy HH:mm:ss} {1}" -f (Get-Date), $m) -Encoding utf8 }
 if ((Test-Path $log) -and (Get-Item $log).Length -gt 200KB) { Remove-Item $log }
@@ -14,15 +13,17 @@ if ($app) {
     Log 'Claude estava fechado: abrindo.'
 }
 
+# Os dois perfis precisam estar CARREGADOS às 23:55 para a extensão Retomazera Coletor de cada um rodar
+# (João Luiz = WhatsApp/Facebook; Joao = OLX). --no-startup-window carrega o perfil sem abrir janela;
+# se o perfil já estiver aberto, não faz nada. A própria extensão abre a janela da coleta.
 $chrome = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
 if (-not (Test-Path $chrome)) { $chrome = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" }
-if (-not (Get-Process -Name chrome -ErrorAction SilentlyContinue)) {
-    if (Test-Path $chrome) {
-        Start-Process $chrome '--profile-directory=Default'
-        Start-Sleep -Seconds 5
-        Start-Process $chrome '--profile-directory="Profile 4"'
-        Log 'Chrome estava fechado: abrindo os perfis João Luiz e Joao.'
-    } else {
-        Log 'Chrome não encontrado.'
-    }
+if (Test-Path $chrome) {
+    $estava = [bool](Get-Process -Name chrome -ErrorAction SilentlyContinue)
+    Start-Process $chrome '--profile-directory=Default --no-startup-window'
+    Start-Sleep -Seconds 5
+    Start-Process $chrome '--profile-directory="Profile 4" --no-startup-window'
+    Log ("Perfis João Luiz e Joao garantidos no Chrome (Chrome já estava aberto: {0})." -f $estava)
+} else {
+    Log 'Chrome não encontrado.'
 }
