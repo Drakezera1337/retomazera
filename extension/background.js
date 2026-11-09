@@ -10,7 +10,8 @@ const FONTES = {
   facebook: { nome: 'Facebook', url: 'https://www.facebook.com/marketplace/inbox', padrao: null, func: extrairFacebook },
   olx: { nome: 'OLX', url: 'https://chat.olx.com.br/', padrao: null, func: extrairOlx },
 };
-const PADRAO = { fontes: { whatsapp: false, facebook: false, olx: false }, hora: '23:55', perfil: '' };
+const PADRAO = { fontes: { whatsapp: false, facebook: false, olx: false }, hora: '23:55', perfil: '',
+  ignorar: ['Pai - Pessoal', 'Mãe', 'Amor', 'Santo Burger', 'Lucian'] };
 
 async function config() {
   const { cfg } = await chrome.storage.local.get('cfg');
@@ -87,7 +88,7 @@ async function coletar(origem) {
           await esperarCarregar(tabId);
         }
         await new Promise((r) => setTimeout(r, 3000));
-        const [res] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func, args: [data] });
+        const [res] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func, args: [data, c.ignorar || []] });
         const r = (res && res.result) || { erro: 'sem resposta do extrator', conversas: [] };
         const corpo = { fonte: k, data, perfil: c.perfil, coletadoEm: Date.now(), ...r };
         const resp = await fetch(`${SERVIDOR}/api/coleta`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });

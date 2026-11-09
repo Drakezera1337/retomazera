@@ -7,7 +7,14 @@
 /* eslint-disable no-unused-vars */
 
 // ------------------------------------------------------------------ OLX
-async function extrairOlx(dataAlvo) {
+async function extrairOlx(dataAlvo, ignorar = []) {
+  // contatos pessoais que o João pediu para não coletar (nome exatamente igual ou telefone)
+  const normal = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const termos = (ignorar || []).map(normal).filter(Boolean);
+  const ignorado = (nome, fone) => {
+    const n = normal(nome), f = String(fone || '').replace(/\D/g, '');
+    return termos.some((t) => /^\d{8,}$/.test(t.replace(/ /g, '')) ? (f && f.endsWith(t.replace(/ /g, '').slice(-8))) : n === t);
+  };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const esperar = async (fn, ms = 20000) => { const fim = Date.now() + ms; while (Date.now() < fim) { const v = fn(); if (v) return v; await sleep(400); } return null; };
   const MESES = { janeiro: 1, fevereiro: 2, 'março': 3, marco: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12 };
@@ -45,6 +52,7 @@ async function extrairOlx(dataAlvo) {
 
   const conversas = [];
   for (const { a, l } of alvos) {
+    if (ignorado(l[l.length - 3], '')) continue;
     const href = a.getAttribute('href') || '';
     try {
       const idAlvo = new URLSearchParams(href.replace(/^[^?]*/, '')).get('chat-id');
@@ -86,7 +94,14 @@ async function extrairOlx(dataAlvo) {
 }
 
 // ------------------------------------------------------------------ Facebook Marketplace
-async function extrairFacebook(dataAlvo) {
+async function extrairFacebook(dataAlvo, ignorar = []) {
+  // contatos pessoais que o João pediu para não coletar (nome exatamente igual ou telefone)
+  const normal = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const termos = (ignorar || []).map(normal).filter(Boolean);
+  const ignorado = (nome, fone) => {
+    const n = normal(nome), f = String(fone || '').replace(/\D/g, '');
+    return termos.some((t) => /^\d{8,}$/.test(t.replace(/ /g, '')) ? (f && f.endsWith(t.replace(/ /g, '').slice(-8))) : n === t);
+  };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const esperar = async (fn, ms = 20000) => { const fim = Date.now() + ms; while (Date.now() < fim) { const v = fn(); if (v) return v; await sleep(400); } return null; };
   const SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
@@ -149,6 +164,7 @@ async function extrairFacebook(dataAlvo) {
   const alvos = acharLinhas().filter((x) => rotuloBate(x.rot)).slice(0, 40);
   const conversas = [];
   for (const { el, rot, nome, anuncio } of alvos) {
+    if (ignorado(nome, '')) continue;
     const resto = [anuncio];
     try {
       document.querySelector('[aria-label="Fechar conversa"]')?.click();
@@ -184,7 +200,14 @@ async function extrairFacebook(dataAlvo) {
 // ------------------------------------------------------------------ WhatsApp Web
 // A lista de conversas do dia vem de WAWebCollections.Chat (só leitura de dados já carregados —
 // NÃO usa funções que carregam mensagens). As mensagens são lidas da tela, rolando o painel.
-async function extrairWhatsapp(dataAlvo, limite = 60) {
+async function extrairWhatsapp(dataAlvo, ignorar = [], limite = 60) {
+  // contatos pessoais que o João pediu para não coletar (nome exatamente igual ou telefone)
+  const normal = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const termos = (ignorar || []).map(normal).filter(Boolean);
+  const ignorado = (nome, fone) => {
+    const n = normal(nome), f = String(fone || '').replace(/\D/g, '');
+    return termos.some((t) => /^\d{8,}$/.test(t.replace(/ /g, '')) ? (f && f.endsWith(t.replace(/ /g, '').slice(-8))) : n === t);
+  };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const esperar = async (fn, ms = 20000) => { const fim = Date.now() + ms; while (Date.now() < fim) { const v = fn(); if (v) return v; await sleep(500); } return null; };
   const [aa, mm, dd] = dataAlvo.split('-').map(Number);
@@ -202,7 +225,7 @@ async function extrairWhatsapp(dataAlvo, limite = 60) {
       const ph = c.id.server === 'c.us' ? c.id.user : (c.contact && c.contact.phoneNumber && c.contact.phoneNumber.user) || '';
       return { ph, nm: (c.contact && (c.contact.name || c.contact.pushname)) || c.formattedTitle || '', t: c.t, empresa: !!(c.contact && c.contact.isEnterprise) };
     })
-    .filter((c) => !c.empresa)
+    .filter((c) => !c.empresa && !ignorado(c.nm, c.ph))
     .sort((a, b) => b.t - a.t)
     .slice(0, limite);
 

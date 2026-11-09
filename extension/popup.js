@@ -14,13 +14,15 @@ chrome.runtime.sendMessage({ tipo: 'info' }, ({ cfg, est, proxima }) => {
   for (const k of ['whatsapp', 'facebook', 'olx']) $(k).checked = !!cfg.fontes[k];
   $('perfil').value = cfg.perfil || '';
   $('hora').value = cfg.hora;
+  $('ignorar').value = (cfg.ignorar || []).join('\n');
   mostrar(est, proxima);
 });
 chrome.runtime.onMessage.addListener((m) => { if (m.tipo === 'estado') mostrar(m.est); });
 
 $('salvar').onclick = () => {
   const cfg = { fontes: { whatsapp: $('whatsapp').checked, facebook: $('facebook').checked, olx: $('olx').checked },
-    perfil: $('perfil').value.trim(), hora: $('hora').value || '23:55' };
+    perfil: $('perfil').value.trim(), hora: $('hora').value || '23:55',
+    ignorar: $('ignorar').value.split('\n').map((x) => x.trim()).filter(Boolean) };
   chrome.runtime.sendMessage({ tipo: 'salvar', cfg }, () => {
     chrome.runtime.sendMessage({ tipo: 'info' }, ({ est, proxima }) => mostrar(est, proxima));
   });
