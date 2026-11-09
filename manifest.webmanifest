@@ -1,0 +1,17 @@
+{
+  "name": "Retomazera",
+  "short_name": "Retomazera",
+  "description": "Quem chamar de novo hoje para fechar venda (WhatsApp, Facebook e OLX)",
+  "start_url": "./",
+  "scope": "./",
+  "id": "./",
+  "display": "standalone",
+  "background_color": "#00966e",
+  "theme_color": "#00966e",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
