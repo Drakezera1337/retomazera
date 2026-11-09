@@ -85,14 +85,25 @@ function linkConversa(x) {
   return '';
 }
 
+// 5522999447760 → (22) 99944-7760 (só para WhatsApp; outros canais não têm telefone)
+function foneBR(x) {
+  if ((x.canal || '').toLowerCase() !== 'whatsapp') return '';
+  let d = String(x.contato || '').replace(/\D/g, '');
+  if (d.length >= 12 && d.startsWith('55')) d = d.slice(2);
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return d;
+}
+
 function cartao(x) {
   const [cls, nomeCanal] = CANAIS[(x.canal || '').toLowerCase()] || ['', x.canal || '—'];
+  const fone = foneBR(x);
   const p = (x.prioridade || 'media').toLowerCase().replace('é', 'e');
   const feito = Boolean(feitos()[x.id]);
   const link = linkConversa(x);
   return `<div class="item ${p} ${feito ? 'feito' : ''}">
     <div class="item-topo">
-      <span class="item-nome">${esc(x.nome || 'Cliente')}</span>
+      <span class="item-nome">${esc(x.nome || 'Cliente')}${fone ? ` <span class="item-fone">${esc(fone)}</span>` : ''}</span>
       <span class="chip ${cls}">${esc(nomeCanal)}</span>
       <span class="chip ${p}">${esc(PRIOR[p] || p)}</span>
     </div>
