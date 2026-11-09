@@ -300,7 +300,7 @@ async function extrairWhatsapp(dataAlvo, ignorar = [], limite = 60) {
       await buscar(c.ph ? c.ph.replace(/^55/, '') : c.nm);
       const r = await lerAberta();
       if (!r) { conversas.push({ nome: c.nm, contato: c.ph, mensagens: [], aviso: 'conversa não abriu' }); continue; }
-      const confere = (c.nm && r.titulo.toLowerCase().includes(c.nm.split(' ')[0].toLowerCase())) || (c.ph && r.titulo.replace(/\D/g, '').endsWith(c.ph.slice(-8)));
+      const confere = (c.nm && r.titulo.toLowerCase().includes(c.nm.split(' ')[0].toLowerCase())) || (c.ph && r.titulo.replace(/\D/g, '').includes(c.ph.slice(-8)));
       // a busca não abriu a conversa certa: não mistura mensagens de outra pessoa
       if (!confere) { conversas.push({ nome: c.nm, contato: c.ph, mensagens: [], aviso: `não consegui abrir (abriu "${r.titulo}")` }); continue; }
       let ultimaData = '';
