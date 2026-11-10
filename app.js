@@ -65,7 +65,20 @@ function chaveCliente(x) {
   if ((canal === 'olx' || canal === 'instagram') && /^https?:/.test(x.contato || '')) return `${canal}:${x.contato}`;
   return `${canal}:${String(x.nome || '').trim().toLowerCase()}`;
 }
-const acaoDe = (x) => S.acoes[chaveCliente(x)] || {};
+// Ação valendo para ESTE card. "Vendido" e "Já chamei" marcados ANTES desta lista ser gerada eram da
+// negociação anterior: se o cliente voltou a aparecer (ex.: comprou um Xbox e agora quer um controle),
+// o card aparece normal, com a etiqueta "⭐ Já comprou". Fixar e Excluir valem sempre.
+function acaoDe(x) {
+  const a = S.acoes[chaveCliente(x)] || {};
+  if (!x._listaEm) return a;
+  const vendidoEm = a.vendidoEm || a.ts || 0;
+  return {
+    ...a,
+    vendido: Boolean(a.vendido && vendidoEm >= x._listaEm),
+    chamado: a.chamado && a.chamado >= x._listaEm ? a.chamado : 0,
+    jaComprou: Boolean(a.vendido && vendidoEm < x._listaEm),
+  };
+}
 // junta dois mapas de ações: por cliente, vale o mais recente
 function juntarAcoes(a, b) {
   const r = { ...a };
@@ -73,14 +86,18 @@ function juntarAcoes(a, b) {
   return r;
 }
 let filaGravar = Promise.resolve();
-async function marcar(chave, campo) {
+async function marcar(chave, campo, ligadoAgora) {
   const x = S.cards[chave] || S.acoes[chave] || {};
   const atual = S.acoes[chave] || {};
-  const valor = campo === 'chamado' ? (atual.chamado ? 0 : Date.now()) : !atual[campo];
+  // o botão diz o estado que aparece NESTE card (pode ser diferente do salvo, ver acaoDe)
+  const ligado = ligadoAgora ?? Boolean(atual[campo]);
+  const valor = campo === 'chamado' ? (ligado ? 0 : Date.now()) : !ligado;
   const novo = {
+    ...atual,
     nome: x.nome, canal: x.canal, contato: x.contato, produto: x.produto, prioridade: x.prioridade,
     situacao: x.situacao, motivo: x.motivo, mensagem: x.mensagem, ultimaMsg: x.ultimaMsg, quando: x.quando,
-    ...atual, [campo]: valor, ts: Date.now(),
+    [campo]: valor, ts: Date.now(),
+    ...(campo === 'vendido' && valor ? { vendidoEm: Date.now(), vendas: (atual.vendas || 0) + 1 } : {}),
   };
   S.acoes = { ...S.acoes, [chave]: novo };
   rotear();
@@ -144,12 +161,13 @@ function cartao(x) {
   const p = (x.prioridade || 'media').toLowerCase().replace('é', 'e');
   const chave = chaveCliente(x);
   S.cards[chave] = x;
-  const a = S.acoes[chave] || {};
+  const a = acaoDe(x);
   const link = linkConversa(x);
-  const bt = (campo, ligado, sim, nao) => `<button class="btn btn-mini ${ligado ? 'ligado' : ''}" data-acao="${campo}" data-chave="${esc(chave)}">${ligado ? sim : nao}</button>`;
+  const bt = (campo, ligado, sim, nao) => `<button class="btn btn-mini ${ligado ? 'ligado' : ''}" data-acao="${campo}" data-chave="${esc(chave)}" data-ligado="${ligado ? 1 : 0}">${ligado ? sim : nao}</button>`;
   return `<div class="item ${p} ${a.chamado ? 'feito' : ''} ${a.vendido ? 'vendido' : ''} ${a.excluido ? 'excluido' : ''}">
     <div class="item-topo">
       <span class="item-nome">${a.fixado ? '📌 ' : ''}${esc(x.nome || 'Cliente')}${fone ? ` <span class="item-fone">${esc(fone)}</span>` : ''}</span>
+      ${a.jaComprou ? '<span class="chip vend" title="Já comprou de você antes">⭐ Já comprou</span>' : ''}
       <span class="chip ${cls}">${esc(nomeCanal)}</span>
       ${a.vendido ? '<span class="chip vend">Vendido</span>' : `<span class="chip ${p}">${esc(PRIOR[p] || p)}</span>`}
     </div>
@@ -179,7 +197,7 @@ function telaDia(dia, titulo) {
       : 'Ainda não há lista. Ela chega todo dia uns minutos depois que o PC é ligado.'}
       ${S.erro ? `<br><br>⚠️ ${esc(S.erro)}` : ''}</div>`;
   }
-  const todos = [...(dia.itens || [])];
+  const todos = (dia.itens || []).map((x) => ({ ...x, _listaEm: dia.geradoEm }));
   const excluidos = todos.filter((x) => acaoDe(x).excluido);
   const itens = todos.filter((x) => !acaoDe(x).excluido);
   // fixados primeiro, vendidos no fim; dentro disso, por prioridade
@@ -238,7 +256,7 @@ function telaSemana(chave) {
     ${w.resumo ? `<div class="painel resumo">${esc(w.resumo)}</div>` : ''}
     ${lista('✅ O que foi feito', w.feito)}
     ${lista('🏆 O que deu certo', w.deu_certo)}
-    ${(w.ficou_pra_tras || []).length ? `<h2 style="margin:14px 0 8px">⏳ Ficou para trás</h2>${w.ficou_pra_tras.filter((x) => !acaoDe(x).excluido).map((x) => cartao({ ...x, prioridade: 'media' })).join('')}` : ''}
+    ${(w.ficou_pra_tras || []).length ? `<h2 style="margin:14px 0 8px">⏳ Ficou para trás</h2>${w.ficou_pra_tras.map((x) => ({ ...x, prioridade: 'media', _listaEm: w.geradoEm })).filter((x) => !acaoDe(x).excluido).map(cartao).join('')}` : ''}
     ${lista('🎯 Para a próxima semana', w.recomendacoes)}
     ${outras.length ? `<div class="painel dias" style="padding:0">${outras.map((x) => `<a href="#/semana/${esc(x.semana)}"><span>${esc(dataBR(x.inicio, false))} a ${esc(dataBR(x.fim, false))}</span><b>${x.numeros?.vendas ?? 0} vendas</b></a>`).join('')}</div>` : ''}`;
 }
@@ -488,7 +506,7 @@ document.addEventListener('click', async (e) => {
     return;
   }
   const b = e.target.closest('[data-acao]');
-  if (b) { marcar(b.dataset.chave, b.dataset.acao); return; }
+  if (b) { marcar(b.dataset.chave, b.dataset.acao, b.dataset.ligado === '1'); return; }
   if (e.target.closest('[data-mostrar-excluidos]')) { e.preventDefault(); S.mostrarExcluidos = !S.mostrarExcluidos; rotear(); }
 });
 window.addEventListener('hashchange', rotear);
