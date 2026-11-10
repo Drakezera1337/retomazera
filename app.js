@@ -3,11 +3,11 @@
 const NO_PC = ['localhost', '127.0.0.1'].includes(location.hostname);
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const K = { cache: 'retomazera:cache', feitos: 'retomazera:feitos', push: 'retomazera:push' };
+const K = { cache: 'retomazera:cache', push: 'retomazera:push', acoesPendentes: 'retomazera:acoes-pendentes' };
 const lerJSON = (k, p) => { try { return JSON.parse(localStorage.getItem(k)) ?? p; } catch { return p; } };
 const gravarJSON = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem storage */ } };
 
-const S = { dias: [], semanas: [], ts: 0, status: null, carregando: false, erro: '' };
+const S = { dias: [], semanas: [], acoes: {}, cards: {}, mostrarExcluidos: false, ts: 0, status: null, carregando: false, erro: '' };
 
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.hidden = false;
@@ -39,12 +39,13 @@ async function carregar() {
   try {
     if (NO_PC) {
       const r = await api('lembretes');
-      S.dias = r.dias || []; S.semanas = r.semanas || []; S.ts = r.ts;
+      S.dias = r.dias || []; S.semanas = r.semanas || []; S.acoes = r.acoes || {}; S.ts = r.ts;
       S.status = await api('status');
     } else if (Sync.enabled()) {
-      const { 'lembretes.json': l } = await Sync.ler({ 'lembretes.json': { dias: [] } });
+      const { 'lembretes.json': l, 'acoes.json': ac } = await Sync.ler({ 'lembretes.json': { dias: [] }, 'acoes.json': {} });
       S.dias = l.dias || []; S.semanas = l.semanas || []; S.ts = l.ts || 0;
-      gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, ts: S.ts });
+      S.acoes = juntarAcoes(ac || {}, lerJSON(K.acoesPendentes, {}));
+      gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, acoes: S.acoes, ts: S.ts });
     }
   } catch (err) {
     S.erro = err.message || String(err);
@@ -53,16 +54,57 @@ async function carregar() {
   rotear();
 }
 
-// ---------------------------------------------------------------- feitos (marcados neste aparelho)
-const feitos = () => lerJSON(K.feitos, {});
-function alternarFeito(id) {
-  const f = feitos();
-  if (f[id]) delete f[id]; else f[id] = Date.now();
-  // guarda só os últimos 30 dias
-  const limite = Date.now() - 30 * 864e5;
-  for (const [k, v] of Object.entries(f)) if (v < limite) delete f[k];
-  gravarJSON(K.feitos, f);
+// ---------------------------------------------------------------- ações nos cards (sincronizadas)
+// Fixar, Já chamei, Vendido e Excluir valem para o CLIENTE (não só para o card do dia) e ficam no Gist
+// (acoes.json), então aparecem no celular e no PC — e a análise do Claude respeita: excluído e vendido
+// não voltam a ser sugeridos.
+function chaveCliente(x) {
+  const canal = (x.canal || '').toLowerCase();
+  const dig = String(x.contato || '').replace(/\D/g, '');
+  if (canal === 'whatsapp' && dig.length >= 8) return `whatsapp:${dig.slice(-8)}`;
+  if ((canal === 'olx' || canal === 'instagram') && /^https?:/.test(x.contato || '')) return `${canal}:${x.contato}`;
+  return `${canal}:${String(x.nome || '').trim().toLowerCase()}`;
+}
+const acaoDe = (x) => S.acoes[chaveCliente(x)] || {};
+// junta dois mapas de ações: por cliente, vale o mais recente
+function juntarAcoes(a, b) {
+  const r = { ...a };
+  for (const [k, v] of Object.entries(b || {})) if (!r[k] || (v.ts || 0) >= (r[k].ts || 0)) r[k] = v;
+  return r;
+}
+let filaGravar = Promise.resolve();
+async function marcar(chave, campo) {
+  const x = S.cards[chave] || S.acoes[chave] || {};
+  const atual = S.acoes[chave] || {};
+  const valor = campo === 'chamado' ? (atual.chamado ? 0 : Date.now()) : !atual[campo];
+  const novo = {
+    nome: x.nome, canal: x.canal, contato: x.contato, produto: x.produto, prioridade: x.prioridade,
+    situacao: x.situacao, motivo: x.motivo, mensagem: x.mensagem, ultimaMsg: x.ultimaMsg, quando: x.quando,
+    ...atual, [campo]: valor, ts: Date.now(),
+  };
+  S.acoes = { ...S.acoes, [chave]: novo };
   rotear();
+  if (campo === 'excluido' && valor) toast('Excluído — não volta a ser sugerido. Para desfazer: "mostrar excluídos" no fim da lista.');
+  if (campo === 'vendido' && valor) toast('Marcado como vendido 💰 — lembre de lançar a venda na Gestão.');
+  // grava em fila (um clique depois do outro não se atropela)
+  filaGravar = filaGravar.then(async () => {
+    try {
+      if (NO_PC) {
+        const r = await api('acoes', { method: 'POST', body: { [chave]: novo } });
+        if (!r.ok) throw new Error(r.erro || 'servidor recusou');
+      } else if (Sync.enabled()) {
+        const pend = { ...lerJSON(K.acoesPendentes, {}), [chave]: novo };
+        gravarJSON(K.acoesPendentes, pend);
+        const { 'acoes.json': remoto } = await Sync.ler({ 'acoes.json': {} });
+        const junto = juntarAcoes(remoto || {}, pend);
+        await Sync.gravar('acoes.json', junto);
+        gravarJSON(K.acoesPendentes, {});
+        S.acoes = juntarAcoes(S.acoes, junto);
+      }
+    } catch (err) {
+      toast(`Salvo só neste aparelho por enquanto (${err.message}); envio de novo depois.`);
+    }
+  });
 }
 
 // ---------------------------------------------------------------- telas
@@ -100,22 +142,31 @@ function cartao(x) {
   const [cls, nomeCanal] = CANAIS[(x.canal || '').toLowerCase()] || ['', x.canal || '—'];
   const fone = foneBR(x);
   const p = (x.prioridade || 'media').toLowerCase().replace('é', 'e');
-  const feito = Boolean(feitos()[x.id]);
+  const chave = chaveCliente(x);
+  S.cards[chave] = x;
+  const a = S.acoes[chave] || {};
   const link = linkConversa(x);
-  return `<div class="item ${p} ${feito ? 'feito' : ''}">
+  const bt = (campo, ligado, sim, nao) => `<button class="btn btn-mini ${ligado ? 'ligado' : ''}" data-acao="${campo}" data-chave="${esc(chave)}">${ligado ? sim : nao}</button>`;
+  return `<div class="item ${p} ${a.chamado ? 'feito' : ''} ${a.vendido ? 'vendido' : ''} ${a.excluido ? 'excluido' : ''}">
     <div class="item-topo">
-      <span class="item-nome">${esc(x.nome || 'Cliente')}${fone ? ` <span class="item-fone">${esc(fone)}</span>` : ''}</span>
+      <span class="item-nome">${a.fixado ? '📌 ' : ''}${esc(x.nome || 'Cliente')}${fone ? ` <span class="item-fone">${esc(fone)}</span>` : ''}</span>
       <span class="chip ${cls}">${esc(nomeCanal)}</span>
-      <span class="chip ${p}">${esc(PRIOR[p] || p)}</span>
+      ${a.vendido ? '<span class="chip vend">Vendido</span>' : `<span class="chip ${p}">${esc(PRIOR[p] || p)}</span>`}
     </div>
     ${x.produto ? `<p><b>${esc(x.produto)}</b>${x.quando ? ` <span class="sub">· última msg ${esc(x.quando)}</span>` : ''}</p>` : ''}
     ${x.situacao ? `<p><span class="rot">Onde parou</span>${esc(x.situacao)}</p>` : ''}
     ${x.motivo ? `<p><span class="rot">Por que chamar</span>${esc(x.motivo)}</p>` : ''}
     ${x.mensagem ? `<span class="rot">Sugestão de mensagem</span><div class="msg">${esc(x.mensagem)}</div>` : ''}
     <div class="acoes">
-      ${x.mensagem ? `<button class="btn" data-copiar="${esc(x.id)}">📋 Copiar</button>` : ''}
+      ${x.mensagem ? `<button class="btn" data-copiar="${esc(chave)}">📋 Copiar</button>` : ''}
       ${link ? `<a class="btn btn-verde" href="${esc(link)}" target="_blank" rel="noopener">💬 Abrir conversa</a>` : ''}
-      <button class="btn" data-feito="${esc(x.id)}">${feito ? '↩️ Desmarcar' : '✅ Já chamei'}</button>
+    </div>
+    <div class="acoes">
+      ${a.excluido ? bt('excluido', true, '↩️ Restaurar', '') : `
+      ${bt('chamado', a.chamado, '✅ Chamei', '☑️ Já chamei')}
+      ${bt('fixado', a.fixado, '📌 Desafixar', '📌 Fixar')}
+      ${bt('vendido', a.vendido, '↩️ Desfazer venda', '💰 Vendido')}
+      ${bt('excluido', false, '', '🗑️ Excluir')}`}
     </div>
   </div>`;
 }
@@ -128,11 +179,19 @@ function telaDia(dia, titulo) {
       : 'Ainda não há lista. Ela chega todo dia uns minutos depois que o PC é ligado.'}
       ${S.erro ? `<br><br>⚠️ ${esc(S.erro)}` : ''}</div>`;
   }
-  const itens = [...(dia.itens || [])];
+  const todos = [...(dia.itens || [])];
+  const excluidos = todos.filter((x) => acaoDe(x).excluido);
+  const itens = todos.filter((x) => !acaoDe(x).excluido);
+  // fixados primeiro, vendidos no fim; dentro disso, por prioridade
   const ordem = { alta: 0, media: 1, média: 1, baixa: 2 };
-  itens.sort((a, b) => (ordem[a.prioridade] ?? 3) - (ordem[b.prioridade] ?? 3));
-  const f = feitos();
-  const pendentes = itens.filter((x) => !f[x.id]).length;
+  const peso = (x) => { const a = acaoDe(x); return (a.fixado ? 0 : 10) + (a.vendido ? 100 : 0) + (ordem[x.prioridade] ?? 3); };
+  itens.sort((a, b) => peso(a) - peso(b));
+  const pendentes = itens.filter((x) => { const a = acaoDe(x); return !a.chamado && !a.vendido; }).length;
+  // fixados de dias anteriores que não estão na lista deste dia
+  const chavesDoDia = new Set(todos.map(chaveCliente));
+  const fixadosAntigos = titulo === 'Chamar hoje'
+    ? Object.entries(S.acoes).filter(([k, a]) => a.fixado && !a.excluido && !a.vendido && !chavesDoDia.has(k)).map(([, a]) => a)
+    : [];
   const porCanal = {};
   itens.forEach((x) => { const c = (x.canal || 'outro').toLowerCase(); porCanal[c] = (porCanal[c] || 0) + 1; });
   const fontes = dia.fontes || {};
@@ -143,7 +202,9 @@ function telaDia(dia, titulo) {
       <span class="chip">${itens.length} para chamar · ${pendentes} pendente(s)</span>
       ${Object.entries(porCanal).map(([c, n]) => { const [cls, nm] = CANAIS[c] || ['', c]; return `<span class="chip ${cls}">${esc(nm)} ${n}</span>`; }).join('')}
     </div>
+    ${fixadosAntigos.length ? `<h2 style="margin:4px 0 8px">📌 Fixados</h2>${fixadosAntigos.map(cartao).join('')}<h2 style="margin:14px 0 8px">Lista do dia</h2>` : ''}
     ${itens.length ? itens.map(cartao).join('') : '<div class="vazio">Ninguém para retomar a partir desse dia. 👍</div>'}
+    ${excluidos.length ? `<p class="sub"><a href="#" data-mostrar-excluidos="1">🗑️ ${excluidos.length} excluído(s) — ${S.mostrarExcluidos ? 'esconder' : 'mostrar'}</a></p>${S.mostrarExcluidos ? excluidos.map(cartao).join('') : ''}` : ''}
     ${Object.keys(fontes).length ? `<p class="sub">Fontes lidas: ${Object.entries(fontes).map(([k, v]) => `${esc(k)}: ${esc(v)}`).join(' · ')}</p>` : ''}`;
 }
 
@@ -177,7 +238,7 @@ function telaSemana(chave) {
     ${w.resumo ? `<div class="painel resumo">${esc(w.resumo)}</div>` : ''}
     ${lista('✅ O que foi feito', w.feito)}
     ${lista('🏆 O que deu certo', w.deu_certo)}
-    ${(w.ficou_pra_tras || []).length ? `<h2 style="margin:14px 0 8px">⏳ Ficou para trás</h2>${w.ficou_pra_tras.map((x, i) => cartao({ ...x, id: `${w.semana}-${i}`, prioridade: 'media' })).join('')}` : ''}
+    ${(w.ficou_pra_tras || []).length ? `<h2 style="margin:14px 0 8px">⏳ Ficou para trás</h2>${w.ficou_pra_tras.filter((x) => !acaoDe(x).excluido).map((x) => cartao({ ...x, prioridade: 'media' })).join('')}` : ''}
     ${lista('🎯 Para a próxima semana', w.recomendacoes)}
     ${outras.length ? `<div class="painel dias" style="padding:0">${outras.map((x) => `<a href="#/semana/${esc(x.semana)}"><span>${esc(dataBR(x.inicio, false))} a ${esc(dataBR(x.fim, false))}</span><b>${x.numeros?.vendas ?? 0} vendas</b></a>`).join('')}</div>` : ''}`;
 }
@@ -422,13 +483,13 @@ function rotear() {
 document.addEventListener('click', async (e) => {
   const c = e.target.closest('[data-copiar]');
   if (c) {
-    const semanais = S.semanas.flatMap((w) => (w.ficou_pra_tras || []).map((y, i) => ({ ...y, id: `${w.semana}-${i}` })));
-    const x = S.dias.flatMap((d) => d.itens || []).concat(semanais).find((i) => i.id === c.dataset.copiar);
+    const x = S.cards[c.dataset.copiar];
     try { await navigator.clipboard.writeText(x?.mensagem || ''); toast('Mensagem copiada'); } catch { toast('Não consegui copiar'); }
     return;
   }
-  const f = e.target.closest('[data-feito]');
-  if (f) alternarFeito(f.dataset.feito);
+  const b = e.target.closest('[data-acao]');
+  if (b) { marcar(b.dataset.chave, b.dataset.acao); return; }
+  if (e.target.closest('[data-mostrar-excluidos]')) { e.preventDefault(); S.mostrarExcluidos = !S.mostrarExcluidos; rotear(); }
 });
 window.addEventListener('hashchange', rotear);
 navigator.serviceWorker?.addEventListener('message', (e) => {
@@ -445,7 +506,7 @@ if (location.hash.startsWith('#config=')) {
 }
 if (!NO_PC) {
   const cache = lerJSON(K.cache, null);
-  if (cache?.dias) { S.dias = cache.dias; S.semanas = cache.semanas || []; S.ts = cache.ts; }
+  if (cache?.dias) { S.dias = cache.dias; S.semanas = cache.semanas || []; S.acoes = cache.acoes || {}; S.ts = cache.ts; }
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 rotear();

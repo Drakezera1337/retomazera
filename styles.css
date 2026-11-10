@@ -61,3 +61,8 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 .abas a.ativa { color: var(--verde); }
 .toast { position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom)); transform: translateX(-50%);
   background: #222; color: #fff; padding: 10px 16px; border-radius: 10px; z-index: 9; max-width: 90vw; font-size: 14px; }
+.btn-mini { padding: 6px 10px; font-size: 13px; font-weight: 600; }
+.btn-mini.ligado { background: color-mix(in srgb, var(--verde) 25%, var(--card)); }
+.item.vendido { border-left-color: var(--verde); opacity: .75; }
+.item.excluido { opacity: .5; }
+.chip.vend { background: var(--verde); color: #fff; }

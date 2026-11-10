@@ -12,3 +12,5 @@ server.log.1
 garantir_claude.log
 coletas/
 semanas/
+acoes.json
+acoes.json.tmp

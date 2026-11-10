@@ -38,6 +38,7 @@ DADOS = os.path.join(BASE_DIR, "dados.json")          # token/gist/inscrição d
 PASTA_DIAS = os.path.join(BASE_DIR, "lembretes")      # histórico local (fora do git)
 PASTA_COLETAS = os.path.join(BASE_DIR, "coletas")     # mensagens copiadas pela extensão (fora do git)
 PASTA_SEMANAS = os.path.join(BASE_DIR, "semanas")     # resumos semanais (fora do git)
+ACOES = os.path.join(BASE_DIR, "acoes.json")          # Fixar/Já chamei/Vendido/Excluir por cliente (fora do git; cópia no Gist)
 NOMES_FONTES = {"whatsapp": "WhatsApp", "facebook": "Facebook", "olx": "OLX", "instagram": "Instagram"}
 SITE_PUBLICO = "https://drakezera1337.github.io/retomazera/"
 PUSH_PEM = os.path.join(BASE_DIR, "push_vapid.pem")
@@ -97,6 +98,36 @@ def semanas_locais(limite=8):
         except (OSError, ValueError):
             pass
     return saida
+
+
+# --------------------------------------------------------------------------- ações dos cards
+def ler_acoes():
+    try:
+        with open(ACOES, encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def juntar_acoes(a, b):
+    """Por cliente, vale a ação mais recente (ts)."""
+    r = dict(a)
+    for k, v in (b or {}).items():
+        if isinstance(v, dict) and (k not in r or (v.get("ts") or 0) >= (r[k].get("ts") or 0)):
+            r[k] = v
+    return r
+
+
+def gravar_acoes(novas):
+    """Junta no arquivo local e devolve o mapa completo."""
+    with _lock:
+        tudo = juntar_acoes(ler_acoes(), novas)
+        tmp = ACOES + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(tudo, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, ACOES)
+    return tudo
 
 
 # --------------------------------------------------------------------------- Gist
@@ -498,6 +529,9 @@ def analisar_semana(notificar=True, forcar=False):
 def processar_gist():
     """Lê push.json (aparelhos inscritos) e responde aos pedidos de teste do celular."""
     g = gist_request()
+    remotas = json_do_arquivo(g.get("files") or {}, "acoes.json", {})
+    if isinstance(remotas, dict) and remotas:
+        gravar_acoes(remotas)
     lista = json_do_arquivo(g.get("files") or {}, "push.json", [])
     lista = [i for i in lista if isinstance(i, dict) and i.get("endpoint") and i.get("keys")]
     with _lock:
@@ -570,7 +604,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/status":
             return self._json(self.status_json())
         if path == "/api/lembretes":
-            return self._json({"dias": dias_locais(), "semanas": semanas_locais(), "ts": int(time.time() * 1000)})
+            return self._json({"dias": dias_locais(), "semanas": semanas_locais(), "acoes": ler_acoes(), "ts": int(time.time() * 1000)})
         if path == "/api/coletas":
             data = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("data", [""])[0]
             return self._json({f: {"conversas": len(c.get("conversas") or []), "erro": c.get("erro"), "coletadoEm": c.get("coletadoEm")}
@@ -626,6 +660,18 @@ class Handler(SimpleHTTPRequestHandler):
             print(f"[coleta] {corpo.get('data')} {corpo.get('fonte')}: {n} conversa(s)" + (f" — ERRO {corpo['erro']}" if corpo.get("erro") else ""))
             agendar_analise(corpo["data"])
             return self._json({"ok": True, "conversas": n})
+        if path == "/api/acoes":
+            novas = {k: v for k, v in corpo.items() if isinstance(v, dict)}
+            tudo = gravar_acoes(novas)
+            if gist_cfg():
+                try:
+                    g = gist_request()
+                    tudo = gravar_acoes(json_do_arquivo(g.get("files") or {}, "acoes.json", {}) or {})
+                    gist_request("PATCH", {"files": {"acoes.json": {"content": json.dumps(tudo, ensure_ascii=False)}}})
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[gist] ações: {exc}")
+                    return self._json({"ok": True, "aviso": "salvo no PC; Gist falhou"})
+            return self._json({"ok": True})
         if path == "/api/semanal":
             threading.Thread(target=analisar_semana, args=(corpo.get("notificar", True), True), daemon=True).start()
             return self._json({"ok": True, "semana": semana_anterior()[2]})
