@@ -13,6 +13,7 @@ const FONTES = {
   instagram: { nome: 'Instagram', url: 'https://www.instagram.com/direct/inbox/', padrao: null, func: extrairInstagram },
 };
 const PADRAO = { fontes: { whatsapp: false, facebook: false, olx: false, instagram: false }, horaMin: 6, espera: 3, perfil: '',
+  noite: true, horaNoite: 21,
   ignorar: ['Pai - Pessoal', 'Mãe', 'Amor', 'Santo Burger', 'Lucian'] };
 
 async function config() {
@@ -34,8 +35,15 @@ async function verificar() {
   if (!Object.values(c.fontes).some(Boolean) || rodando) return;
   const agora = new Date();
   if (agora.getHours() < (c.horaMin ?? 6)) return;
-  const { auto } = await chrome.storage.local.get('auto');
+  const { auto, autoNoite } = await chrome.storage.local.get(['auto', 'autoNoite']);
   const a = auto || {};
+  // coleta da NOITE (preparar as vendas de amanhã): 1x por dia, a partir de horaNoite, se a da manhã já foi feita
+  const n = autoNoite || {};
+  if (c.noite && agora.getHours() >= (c.horaNoite ?? 21) && a.dia === hojeIso() && a.ok
+      && !(n.dia === hojeIso() && (n.ok || (n.tentativas || 0) >= 2))
+      && !(n.dia === hojeIso() && n.ultimaTentativa && Date.now() - n.ultimaTentativa < 20 * 60000)) {
+    return coletar('noite');
+  }
   if (a.dia === hojeIso() && (a.ok || (a.tentativas || 0) >= 3)) return; // já coletou hoje (ou desistiu)
   if (Date.now() - (await inicioNavegador()) < (c.espera ?? 3) * 60000) return;
   if (a.dia === hojeIso() && a.ultimaTentativa && Date.now() - a.ultimaTentativa < 20 * 60000) return;
@@ -118,15 +126,18 @@ async function coletar(origem) {
           await esperarCarregar(tabId);
         }
         await new Promise((r) => setTimeout(r, 3000));
-        const desde = await desdeDe(k, inicioAnterior);
+        // noite: só as conversas de hoje (não mexe no ponto de partida da coleta da manhã)
+        const meiaNoite = new Date(); meiaNoite.setHours(0, 0, 0, 0);
+        const desde = origem === 'noite' ? meiaNoite.getTime() : await desdeDe(k, inicioAnterior);
         const inicioFonte = Date.now();
         const [res] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func, args: [desde, c.ignorar || []] });
         const r = (res && res.result) || { erro: 'sem resposta do extrator', conversas: [] };
-        const corpo = { fonte: k, data, perfil: c.perfil, lote: ativas, desde, ate: inicioFonte, coletadoEm: Date.now(), ...r };
+        const corpo = { fonte: k, data, perfil: c.perfil, lote: ativas, turno: origem === 'noite' ? 'noite' : '', desde, ate: inicioFonte, coletadoEm: Date.now(), ...r };
         const resp = await fetch(`${SERVIDOR}/api/coleta`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
         const j = await resp.json().catch(() => ({}));
         const n = (r.conversas || []).length;
         if (j.ok && !r.erro && origem === 'auto') { await marcarUltima(k, inicioFonte); algumaOk = true; }
+        if (j.ok && !r.erro && origem === 'noite') algumaOk = true;
         await estado({ fontes: { ...((await chrome.storage.local.get('est')).est.fontes || {}), [k]: r.erro ? `erro: ${r.erro}` : (j.ok ? `${n} conversa(s)` : `servidor: ${j.erro || resp.status}`) } });
       } catch (e) {
         await estado({ fontes: { ...((await chrome.storage.local.get('est')).est.fontes || {}), [k]: `erro: ${String(e.message || e).slice(0, 150)}` } });
@@ -138,10 +149,11 @@ async function coletar(origem) {
     }
   } finally {
     if (janela) await chrome.windows.remove(janela.id).catch(() => {});
-    if (origem === 'auto') {
-      const { auto } = await chrome.storage.local.get('auto');
-      const a = auto && auto.dia === data ? auto : { dia: data, tentativas: 0 };
-      await chrome.storage.local.set({ auto: { dia: data, ok: a.ok || algumaOk, tentativas: (a.tentativas || 0) + 1, ultimaTentativa: Date.now(), feitaEm: algumaOk ? Date.now() : a.feitaEm } });
+    if (origem === 'auto' || origem === 'noite') {
+      const chave = origem === 'noite' ? 'autoNoite' : 'auto';
+      const { [chave]: ant } = await chrome.storage.local.get(chave);
+      const a = ant && ant.dia === data ? ant : { dia: data, tentativas: 0 };
+      await chrome.storage.local.set({ [chave]: { dia: data, ok: a.ok || algumaOk, tentativas: (a.tentativas || 0) + 1, ultimaTentativa: Date.now(), feitaEm: algumaOk ? Date.now() : a.feitaEm } });
     }
     rodando = false;
     await estado({ rodando: false, atual: '', fim: Date.now() });
@@ -149,14 +161,14 @@ async function coletar(origem) {
 }
 
 chrome.runtime.onMessage.addListener((msg, _s, responder) => {
-  if (msg.tipo === 'coletar') { coletar('manual'); responder({ ok: true }); }
+  if (msg.tipo === 'coletar') { coletar(msg.turno === 'noite' ? 'noite' : 'manual'); responder({ ok: true }); }
   if (msg.tipo === 'salvar') {
     chrome.storage.local.set({ cfg: msg.cfg }).then(iniciar).then(() => responder({ ok: true }));
     return true;
   }
   if (msg.tipo === 'info') {
-    Promise.all([config(), chrome.storage.local.get(['est', 'auto'])])
-      .then(([cfg, { est, auto }]) => responder({ cfg, est: est || {}, auto: auto || {}, hoje: hojeIso() }));
+    Promise.all([config(), chrome.storage.local.get(['est', 'auto', 'autoNoite'])])
+      .then(([cfg, { est, auto, autoNoite }]) => responder({ cfg, est: est || {}, auto: auto || {}, autoNoite: autoNoite || {}, hoje: hojeIso() }));
     return true;
   }
   return false;

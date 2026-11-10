@@ -7,7 +7,7 @@ const K = { cache: 'retomazera:cache', push: 'retomazera:push', acoesPendentes: 
 const lerJSON = (k, p) => { try { return JSON.parse(localStorage.getItem(k)) ?? p; } catch { return p; } };
 const gravarJSON = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem storage */ } };
 
-const S = { dias: [], semanas: [], acoes: {}, cards: {}, mostrarExcluidos: false, ts: 0, status: null, carregando: false, erro: '' };
+const S = { dias: [], semanas: [], noites: [], acoes: {}, cards: {}, mostrarExcluidos: false, ts: 0, status: null, carregando: false, erro: '' };
 
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.hidden = false;
@@ -39,13 +39,13 @@ async function carregar() {
   try {
     if (NO_PC) {
       const r = await api('lembretes');
-      S.dias = r.dias || []; S.semanas = r.semanas || []; S.acoes = r.acoes || {}; S.ts = r.ts;
+      S.dias = r.dias || []; S.semanas = r.semanas || []; S.noites = r.noites || []; S.acoes = r.acoes || {}; S.ts = r.ts;
       S.status = await api('status');
     } else if (Sync.enabled()) {
       const { 'lembretes.json': l, 'acoes.json': ac } = await Sync.ler({ 'lembretes.json': { dias: [] }, 'acoes.json': {} });
-      S.dias = l.dias || []; S.semanas = l.semanas || []; S.ts = l.ts || 0;
+      S.dias = l.dias || []; S.semanas = l.semanas || []; S.noites = l.noites || []; S.ts = l.ts || 0;
       S.acoes = juntarAcoes(ac || {}, lerJSON(K.acoesPendentes, {}));
-      gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, acoes: S.acoes, ts: S.ts });
+      gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, noites: S.noites, acoes: S.acoes, ts: S.ts });
     }
   } catch (err) {
     S.erro = err.message || String(err);
@@ -136,7 +136,7 @@ function hojeIso() {
 }
 function vendasMarcadas() {
   const porCliente = {};
-  for (const dia of [...S.dias].sort((a, b) => (a.geradoEm || 0) - (b.geradoEm || 0))) {
+  for (const dia of [...S.dias, ...S.noites].sort((a, b) => (a.geradoEm || 0) - (b.geradoEm || 0))) {
     for (const v of dia.agendadas || []) porCliente[chaveCliente(v)] = { ...v, _listaEm: dia.geradoEm };
   }
   return Object.values(porCliente).map((v) => ({ ...v, _chave: `venda:${chaveCliente(v)}:${v.data}` }))
@@ -194,6 +194,26 @@ function marcarVenda(chaveVenda, campo) {
   if (campo === 'cancelada' && valor) toast('Venda tirada da lista.');
   salvarAcoes(novas);
 }
+// ---------------------------------------------------------------- noite: preparar as vendas de amanhã
+function blocoNoite() {
+  const hoje = hojeIso();
+  const n = S.noites.find((x) => x.data === hoje || x.amanha === hoje);
+  if (!n) return '';
+  const deHoje = n.data === hoje; // à noite: preparar amanhã; de manhã (amanha === hoje): o que ficou do preparo
+  const prep = (n.preparar || []).map((t, i) => ({ t, k: `prep:${n.data}:${i}` }));
+  const feitos = prep.filter((p) => (S.acoes[p.k] || {}).feito).length;
+  if (!deHoje && feitos === prep.length) return '';
+  const vendas = vendasMarcadas().filter((v) => v.data === n.amanha && !(S.acoes[v._chave] || {}).cancelada);
+  const conf = deHoje ? (n.confirmar || []).filter((x) => !acaoDe(x).excluido) : [];
+  return `<h2 style="margin:4px 0 8px">🌙 ${deHoje ? 'Preparar amanhã' : 'Preparo de ontem à noite'} <span class="sub">(${esc(dataBR(n.amanha))})</span></h2>
+    ${n.resumo && deHoje ? `<div class="painel resumo">${esc(n.resumo)}</div>` : ''}
+    ${prep.length ? `<div class="painel"><h2>✅ Checklist <span class="sub">${feitos}/${prep.length}</span></h2>
+      ${prep.map((p) => { const ok = (S.acoes[p.k] || {}).feito; return `<label class="check ${ok ? 'ok' : ''}"><input type="checkbox" data-prep="${esc(p.k)}" ${ok ? 'checked' : ''}> <span>${esc(p.t)}</span></label>`; }).join('')}
+    </div>` : ''}
+    ${deHoje && vendas.length ? `<h2 style="margin:14px 0 8px">📦 Vendas de amanhã (${vendas.length})</h2>${vendas.map(cartaoVenda).join('')}` : ''}
+    ${conf.length ? `<h2 style="margin:14px 0 8px">📞 Confirmar hoje à noite</h2>${conf.map(cartao).join('')}` : ''}`;
+}
+
 function blocoVendas() {
   const hoje = hojeIso();
   const limiteAtraso = new Date(Date.now() - 3 * 864e5);
@@ -276,6 +296,9 @@ function cartao(x) {
 }
 
 function telaDia(dia, titulo) {
+  if (!dia && titulo === 'Chamar hoje' && (S.noites.length || vendasMarcadas().length)) {
+    return `<h1>Chamar hoje</h1>${blocoNoite()}${blocoVendas()}<div class="vazio">A lista de quem chamar chega uns minutos depois que o PC é ligado.</div>`;
+  }
   if (!dia) {
     const conectar = !NO_PC && !Sync.enabled();
     return `<div class="vazio">${S.carregando ? 'Carregando…' : conectar
@@ -306,7 +329,7 @@ function telaDia(dia, titulo) {
       <span class="chip">${itens.length} para chamar · ${pendentes} pendente(s)</span>
       ${Object.entries(porCanal).map(([c, n]) => { const [cls, nm] = CANAIS[c] || ['', c]; return `<span class="chip ${cls}">${esc(nm)} ${n}</span>`; }).join('')}
     </div>
-    ${titulo === 'Chamar hoje' ? blocoVendas() : ''}
+    ${titulo === 'Chamar hoje' ? blocoNoite() + blocoVendas() : ''}
     ${fixadosAntigos.length ? `<h2 style="margin:4px 0 8px">📌 Fixados</h2>${fixadosAntigos.map(cartao).join('')}<h2 style="margin:14px 0 8px">Lista do dia</h2>` : ''}
     ${itens.length ? itens.map(cartao).join('') : '<div class="vazio">Ninguém para retomar a partir desse dia. 👍</div>'}
     ${excluidos.length ? `<p class="sub"><a href="#" data-mostrar-excluidos="1">🗑️ ${excluidos.length} excluído(s) — ${S.mostrarExcluidos ? 'esconder' : 'mostrar'}</a></p>${S.mostrarExcluidos ? excluidos.map(cartao).join('') : ''}` : ''}
@@ -595,6 +618,8 @@ document.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-acao]');
   if (b) { marcar(b.dataset.chave, b.dataset.acao, b.dataset.ligado === '1'); return; }
   if (e.target.closest('[data-mostrar-excluidos]')) { e.preventDefault(); S.mostrarExcluidos = !S.mostrarExcluidos; rotear(); }
+  const cp = e.target.closest('[data-prep]');
+  if (cp) { const k = cp.dataset.prep; salvarAcoes({ [k]: { feito: cp.checked, ts: Date.now() } }); return; }
   const bv = e.target.closest('[data-venda]');
   if (bv) { marcarVenda(bv.dataset.chave, bv.dataset.venda); return; }
   const cv = e.target.closest('[data-copiar-venda]');
@@ -618,7 +643,7 @@ if (location.hash.startsWith('#config=')) {
 }
 if (!NO_PC) {
   const cache = lerJSON(K.cache, null);
-  if (cache?.dias) { S.dias = cache.dias; S.semanas = cache.semanas || []; S.acoes = cache.acoes || {}; S.ts = cache.ts; }
+  if (cache?.dias) { S.dias = cache.dias; S.semanas = cache.semanas || []; S.noites = cache.noites || []; S.acoes = cache.acoes || {}; S.ts = cache.ts; }
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 rotear();

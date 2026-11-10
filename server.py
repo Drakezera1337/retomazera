@@ -38,6 +38,7 @@ DADOS = os.path.join(BASE_DIR, "dados.json")          # token/gist/inscrição d
 PASTA_DIAS = os.path.join(BASE_DIR, "lembretes")      # histórico local (fora do git)
 PASTA_COLETAS = os.path.join(BASE_DIR, "coletas")     # mensagens copiadas pela extensão (fora do git)
 PASTA_SEMANAS = os.path.join(BASE_DIR, "semanas")     # resumos semanais (fora do git)
+PASTA_NOITES = os.path.join(BASE_DIR, "noites")       # análises da noite: preparar as vendas de amanhã (fora do git)
 ACOES = os.path.join(BASE_DIR, "acoes.json")          # Fixar/Já chamei/Vendido/Excluir por cliente (fora do git; cópia no Gist)
 NOMES_FONTES = {"whatsapp": "WhatsApp", "facebook": "Facebook", "olx": "OLX", "instagram": "Instagram"}
 SITE_PUBLICO = "https://drakezera1337.github.io/retomazera/"
@@ -94,6 +95,20 @@ def semanas_locais(limite=8):
     for n in nomes[:limite]:
         try:
             with open(os.path.join(PASTA_SEMANAS, n), encoding="utf-8") as f:
+                saida.append(json.load(f))
+        except (OSError, ValueError):
+            pass
+    return saida
+
+
+def noites_locais(limite=3):
+    if not os.path.isdir(PASTA_NOITES):
+        return []
+    nomes = sorted((n for n in os.listdir(PASTA_NOITES) if re.fullmatch(r"\d{4}-\d{2}-\d{2}\.json", n)), reverse=True)
+    saida = []
+    for n in nomes[:limite]:
+        try:
+            with open(os.path.join(PASTA_NOITES, n), encoding="utf-8") as f:
                 saida.append(json.load(f))
         except (OSError, ValueError):
             pass
@@ -183,7 +198,7 @@ def json_do_arquivo(arquivos, nome, padrao):
 def publicar_gist():
     if not gist_cfg():
         return False
-    corpo = {"dias": dias_locais(), "semanas": semanas_locais(), "ts": int(time.time() * 1000)}
+    corpo = {"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "ts": int(time.time() * 1000)}
     gist_request("PATCH", {"files": {"lembretes.json": {"content": json.dumps(corpo, ensure_ascii=False)}}})
     return True
 
@@ -294,8 +309,19 @@ def salvar_dia(corpo):
             "ultimaMsg": str(x.get("ultimaMsg") or "")[:300],
             "quando": str(x.get("quando") or "")[:20],
         })
+    agendadas = limpar_agendadas(corpo.get("agendadas") or [])
+    dia = {"data": data, "geradoEm": int(time.time() * 1000), "resumo": str(corpo.get("resumo") or "")[:1500],
+           "fontes": corpo.get("fontes") if isinstance(corpo.get("fontes"), dict) else {}, "itens": limpos,
+           "agendadas": agendadas}
+    os.makedirs(PASTA_DIAS, exist_ok=True)
+    with open(os.path.join(PASTA_DIAS, data + ".json"), "w", encoding="utf-8") as f:
+        json.dump(dia, f, ensure_ascii=False, indent=1)
+    return dia
+
+
+def limpar_agendadas(lista):
     agendadas = []
-    for x in corpo.get("agendadas") or []:
+    for x in lista or []:
         if not isinstance(x, dict) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(x.get("data") or "")):
             continue
         txt = lambda k, n=200: str(x.get(k) or "")[:n]
@@ -308,22 +334,21 @@ def salvar_dia(corpo):
             "entrada": txt("entrada", 200), "status": txt("status", 20) or "confirmada",
             "observacoes": txt("observacoes", 400), "resumo": txt("resumo", 400),
         })
-    dia = {"data": data, "geradoEm": int(time.time() * 1000), "resumo": str(corpo.get("resumo") or "")[:1500],
-           "fontes": corpo.get("fontes") if isinstance(corpo.get("fontes"), dict) else {}, "itens": limpos,
-           "agendadas": agendadas}
-    os.makedirs(PASTA_DIAS, exist_ok=True)
-    with open(os.path.join(PASTA_DIAS, data + ".json"), "w", encoding="utf-8") as f:
-        json.dump(dia, f, ensure_ascii=False, indent=1)
-    return dia
+    return agendadas
 
 
 # --------------------------------------------------------------------------- coletas da extensão
+def pasta_coleta(data, turno=""):
+    return os.path.join(PASTA_COLETAS, data, "noite") if turno == "noite" else os.path.join(PASTA_COLETAS, data)
+
+
 def salvar_coleta(corpo):
-    """Grava coletas/AAAA-MM-DD/<fonte>.json e refaz o conversas.txt (as 3 fontes juntas, para o Claude ler)."""
+    """Grava coletas/AAAA-MM-DD[/noite]/<fonte>.json e refaz o conversas.txt (todas as fontes juntas, para o Claude ler)."""
     data, fonte = str(corpo.get("data") or ""), str(corpo.get("fonte") or "")
+    turno = "noite" if corpo.get("turno") == "noite" else ""
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data) or fonte not in NOMES_FONTES:
         raise ValueError("data ou fonte inválida")
-    pasta = os.path.join(PASTA_COLETAS, data)
+    pasta = pasta_coleta(data, turno)
     os.makedirs(pasta, exist_ok=True)
     with open(os.path.join(pasta, fonte + ".json"), "w", encoding="utf-8") as f:
         json.dump(corpo, f, ensure_ascii=False, indent=1)
@@ -332,12 +357,12 @@ def salvar_coleta(corpo):
         lotes = ler_dados().get("fontes_perfis", {})
         lotes[str(corpo.get("perfil") or "?")] = [f for f in corpo["lote"] if f in NOMES_FONTES]
         gravar_dados(fontes_perfis=lotes)
-    gerar_texto(data)
+    gerar_texto(data, turno)
     return len(corpo.get("conversas") or [])
 
 
-def coletas_do_dia(data):
-    pasta = os.path.join(PASTA_COLETAS, data)
+def coletas_do_dia(data, turno=""):
+    pasta = pasta_coleta(data, turno)
     saida = {}
     for fonte in NOMES_FONTES:
         try:
@@ -348,10 +373,10 @@ def coletas_do_dia(data):
     return saida
 
 
-def gerar_texto(data):
+def gerar_texto(data, turno=""):
     """Texto compacto: cabeçalho por conversa e uma linha por mensagem (J = João, C = cliente)."""
-    linhas = [f"CONVERSAS DE {data} (J = João/loja, C = cliente)", ""]
-    for fonte, c in coletas_do_dia(data).items():
+    linhas = [f"CONVERSAS DE {data}{' (NOITE)' if turno else ''} (J = João/loja, C = cliente)", ""]
+    for fonte, c in coletas_do_dia(data, turno).items():
         quando = time.strftime("%d/%m %H:%M", time.localtime((c.get("coletadoEm") or 0) / 1000))
         convs = c.get("conversas") or []
         linhas.append(f"======== {NOMES_FONTES[fonte]} — {len(convs)} conversa(s) — coletado {quando}"
@@ -382,14 +407,14 @@ def gerar_texto(data):
                 texto = " ".join(str(m.get("texto") or "").split())
                 linhas.append(f"{m.get('hora') or '--:--'} {'J' if m.get('eu') else 'C'}: {texto}")
         linhas.append("")
-    with open(os.path.join(PASTA_COLETAS, data, "conversas.txt"), "w", encoding="utf-8") as f:
+    with open(os.path.join(pasta_coleta(data, turno), "conversas.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(linhas))
 
 
 # --------------------------------------------------------------------------- análise pelo Claude Code
 ESPERA_FONTES_S = 20 * 60      # espera as outras fontes até 20 min depois da primeira
 ANALISE_TIMEOUT_S = 20 * 60
-_analise = {"rodando": False, "timer": None, "lock": threading.Lock()}
+_analise = {"rodando": False, "timer": None, "timer_noite": None, "lock": threading.Lock()}
 
 
 def claude_exe():
@@ -428,20 +453,21 @@ def ja_analisada(data):
         return False
 
 
-def agendar_analise(data):
-    # Chamado a cada coleta recebida: analisa já se as 3 fontes chegaram; senão, em até 20 min.
-    coletas = coletas_do_dia(data)
+def agendar_analise(data, turno=""):
+    # Chamado a cada coleta recebida: analisa já se todas as fontes chegaram; senão, em até 20 min.
+    coletas = coletas_do_dia(data, turno)
     completas = all(f in coletas for f in fontes_esperadas())
     primeira = min((c.get("coletadoEm") or 0) for c in coletas.values()) / 1000
     atraso = 30 if completas else max(30, ESPERA_FONTES_S - (time.time() - primeira))
+    chave_timer = "timer_noite" if turno == "noite" else "timer"
     with _analise["lock"]:
-        if _analise["timer"]:
-            _analise["timer"].cancel()
-        t = threading.Timer(atraso, analisar, args=(data,))
+        if _analise[chave_timer]:
+            _analise[chave_timer].cancel()
+        t = threading.Timer(atraso, analisar_noite if turno == "noite" else analisar, args=(data,))
         t.daemon = True
-        _analise["timer"] = t
+        _analise[chave_timer] = t
         t.start()
-    print(f"[análise] {data}: {'todas as fontes chegaram' if completas else 'esperando as outras fontes'}; roda em {int(atraso)} s")
+    print(f"[análise{' noite' if turno else ''}] {data}: {'todas as fontes chegaram' if completas else 'esperando as outras fontes'}; roda em {int(atraso)} s")
 
 
 def analisar(data, notificar=True, forcar=False):
@@ -490,6 +516,78 @@ def analisar(data, notificar=True, forcar=False):
                 analisar_semana()
         except Exception as exc:  # noqa: BLE001
             print(f"[semana] {exc}")
+
+
+def payload_noite(n):
+    vendas = [a for a in n.get("agendadas") or [] if a.get("data") == n.get("amanha")]
+    prep = n.get("preparar") or []
+    conf = n.get("confirmar") or []
+    if vendas:
+        titulo = f"🌙 Amanhã: {len(vendas)} venda{'s' if len(vendas) > 1 else ''} marcada{'s' if len(vendas) > 1 else ''}"
+        corpo = " · ".join(f"{a.get('hora') or ''} {a.get('nome') or '?'}".strip() for a in vendas[:3])
+        if prep:
+            corpo += f" | Preparar: {prep[0]}" + (f" (+{len(prep) - 1})" if len(prep) > 1 else "")
+    else:
+        titulo = "🌙 Amanhã: nenhuma venda marcada"
+        corpo = str(n.get("resumo") or "")[:150]
+    if conf:
+        corpo += f" | Confirmar hoje: {len(conf)}"
+    return {"title": titulo, "body": corpo[:220], "tag": "retomazera-noite-" + n.get("data", ""), "data": "noite"}
+
+
+def analisar_noite(data, notificar=True, forcar=False):
+    # Análise da noite: lê coletas/<data>/noite e grava noites/<data>.json (vendas de amanhã + preparo + confirmar hoje).
+    pasta = pasta_coleta(data, "noite")
+    saida = os.path.join(pasta, "resultado.json")
+    arquivo = os.path.join(PASTA_NOITES, data + ".json")
+    with _analise["lock"]:
+        if _analise["rodando"]:
+            print("[noite] já tem uma análise rodando; tento de novo em 2 min")
+            t = threading.Timer(120, analisar_noite, args=(data, notificar, forcar)); t.daemon = True; t.start()
+            return False
+        coletas = coletas_do_dia(data, "noite")
+        ultima = max([c.get("coletadoEm") or 0 for c in coletas.values()] or [0])
+        if not coletas or (not forcar and os.path.exists(arquivo) and os.path.getmtime(arquivo) * 1000 >= ultima):
+            return False
+        _analise["rodando"] = True
+    try:
+        amanha = (date.fromisoformat(data) + timedelta(days=1)).isoformat()
+        with open(os.path.join(BASE_DIR, "noite_prompt.md"), encoding="utf-8") as f:
+            prompt = f.read().replace("{DATA}", data).replace("{AMANHA}", amanha)
+        if os.path.exists(saida):
+            os.remove(saida)
+        print(f"[noite] {data}: chamando o Claude Code…")
+        inicio = time.time()
+        r = chamar_claude(prompt, os.path.join(pasta, "analise.log"))
+        if not os.path.exists(saida):
+            raise RuntimeError(f"o Claude não gravou resultado.json (código {r.returncode}; veja coletas/{data}/noite/analise.log)")
+        with open(saida, encoding="utf-8") as f:
+            corpo = json.load(f)
+        # reaproveita a limpeza da análise do dia para as vendas marcadas
+        limpas = limpar_agendadas(corpo.get("agendadas") or [])
+        confirmar = [x for x in (corpo.get("confirmar") or []) if isinstance(x, dict)][:15]
+        noite = {"data": data, "amanha": amanha, "geradoEm": int(time.time() * 1000),
+                 "resumo": str(corpo.get("resumo") or "")[:1500], "agendadas": limpas,
+                 "preparar": [str(x)[:300] for x in (corpo.get("preparar") or [])][:20],
+                 "confirmar": [{k: str(x.get(k) or "")[:600] for k in ("nome", "canal", "contato", "produto", "situacao", "motivo", "mensagem")}
+                               | {"prioridade": "alta"} for x in confirmar]}
+        os.makedirs(PASTA_NOITES, exist_ok=True)
+        with open(arquivo, "w", encoding="utf-8") as f:
+            json.dump(noite, f, ensure_ascii=False, indent=1)
+        try:
+            publicar_gist()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[gist] publicar: {exc}")
+        n = enviar_push(payload_noite(noite)) if notificar else 0
+        print(f"[noite] {data}: {len(limpas)} venda(s) marcada(s), {len(noite['preparar'])} preparo(s), push={n}, {time.time() - inicio:.0f} s")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[noite] {data}: FALHOU — {exc}")
+        if notificar:
+            enviar_push({"title": "Retomazera ⚠️", "body": f"A análise da noite falhou: {str(exc)[:150]}", "tag": "retomazera-erro"})
+        return False
+    finally:
+        _analise["rodando"] = False
 
 
 def semana_anterior(hoje=None):
@@ -626,7 +724,8 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/status":
             return self._json(self.status_json())
         if path == "/api/lembretes":
-            return self._json({"dias": dias_locais(), "semanas": semanas_locais(), "acoes": ler_acoes(), "ts": int(time.time() * 1000)})
+            return self._json({"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "acoes": ler_acoes(),
+                               "ts": int(time.time() * 1000)})
         if path == "/api/coletas":
             data = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("data", [""])[0]
             return self._json({f: {"conversas": len(c.get("conversas") or []), "erro": c.get("erro"), "coletadoEm": c.get("coletadoEm")}
@@ -639,7 +738,7 @@ class Handler(SimpleHTTPRequestHandler):
             b64 = urllib.parse.quote(base64.urlsafe_b64encode(dados).decode().rstrip("="))
             return self._json({"url": f"{SITE_PUBLICO}#config={b64}"})
         if (path.lower().endswith(self.PRIVADOS) or "/." in path or path.startswith("/lembretes/")
-                or path.startswith("/coletas/") or path.startswith("/semanas/") or path in ("/dados.json",)):
+                or path.startswith("/coletas/") or path.startswith("/semanas/") or path.startswith("/noites/") or path in ("/dados.json",)):
             return self._json({"erro": "não encontrado"}, 404)
         return super().do_GET()
 
@@ -680,7 +779,7 @@ class Handler(SimpleHTTPRequestHandler):
             except (ValueError, OSError) as exc:
                 return self._json({"ok": False, "erro": str(exc)}, 400)
             print(f"[coleta] {corpo.get('data')} {corpo.get('fonte')}: {n} conversa(s)" + (f" — ERRO {corpo['erro']}" if corpo.get("erro") else ""))
-            agendar_analise(corpo["data"])
+            agendar_analise(corpo["data"], "noite" if corpo.get("turno") == "noite" else "")
             return self._json({"ok": True, "conversas": n})
         if path == "/api/acoes":
             novas = {k: v for k, v in corpo.items() if isinstance(v, dict)}
@@ -694,6 +793,12 @@ class Handler(SimpleHTTPRequestHandler):
                     print(f"[gist] ações: {exc}")
                     return self._json({"ok": True, "aviso": "salvo no PC; Gist falhou"})
             return self._json({"ok": True})
+        if path == "/api/noite":
+            data = str(corpo.get("data") or time.strftime("%Y-%m-%d"))
+            if not coletas_do_dia(data, "noite"):
+                return self._json({"ok": False, "erro": "sem coleta da noite nesse dia"}, 400)
+            threading.Thread(target=analisar_noite, args=(data, corpo.get("notificar", True), True), daemon=True).start()
+            return self._json({"ok": True, "iniciada": data})
         if path == "/api/semanal":
             threading.Thread(target=analisar_semana, args=(corpo.get("notificar", True), True), daemon=True).start()
             return self._json({"ok": True, "semana": semana_anterior()[2]})
