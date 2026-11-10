@@ -8,18 +8,23 @@
   :root { --fundo: #0f1513; --card: #18211e; --texto: #e6ece9; --suave: #9aa8a2; --borda: #2a3632; }
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; }
+/* Layout em coluna que ocupa a tela toda: topo e menu são parte do layout e só o <main> rola.
+   (No iPhone, menu com position:fixed às vezes "sobe" para o meio da tela depois de rolar.) */
+html, body { margin: 0; height: 100%; }
 body {
   font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--fundo); color: var(--texto);
-  padding-bottom: calc(70px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden;
 }
 .topo {
-  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between;
+  flex: none; z-index: 5; display: flex; align-items: center; justify-content: space-between;
   background: var(--verde); color: #fff; padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
 }
 .logo { color: #fff; text-decoration: none; font-weight: 800; font-size: 20px; letter-spacing: -.3px; }
 .selo { font-size: 12px; opacity: .9; }
-main { max-width: 720px; margin: 0 auto; padding: 14px 16px; }
+main {
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  box-sizing: border-box; width: 100%; padding: 14px max(16px, calc((100% - 720px) / 2)) 24px;
+}
 h1 { font-size: 19px; margin: 4px 0 2px; }
 h2 { font-size: 16px; margin: 0 0 8px; }
 .sub { color: var(--suave); font-size: 13px; margin: 0 0 12px; }
@@ -53,7 +58,7 @@ input[type=text], input[type=password], input:not([type]) {
 .qr { background: #fff; padding: 12px; border-radius: 12px; display: inline-block; margin-top: 10px; }
 video { width: 100%; border-radius: 12px; margin-top: 10px; }
 .abas {
-  position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: var(--card); border-top: 1px solid var(--borda);
+  flex: none; display: flex; background: var(--card); border-top: 1px solid var(--borda);
   padding-bottom: env(safe-area-inset-bottom); z-index: 5;
 }
 .abas a { flex: 1; text-align: center; padding: 8px 0; text-decoration: none; color: var(--suave); font-size: 20px; }

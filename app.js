@@ -602,7 +602,8 @@ document.addEventListener('click', async (e) => {
     try { await navigator.clipboard.writeText(textoVenda(S.cards[cv.dataset.copiarVenda] || {})); toast('Resumo da venda copiado'); } catch { toast('Não consegui copiar'); }
   }
 });
-window.addEventListener('hashchange', rotear);
+// trocou de tela: volta ao topo (agora quem rola é o <main>, não a página)
+window.addEventListener('hashchange', () => { rotear(); $('#view').scrollTop = 0; });
 navigator.serviceWorker?.addEventListener('message', (e) => {
   if (e.data?.tipo === 'abrir') { location.href = e.data.url; carregar(); }
   if (e.data?.tipo === 'push') carregar();
