@@ -66,3 +66,7 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 .item.vendido { border-left-color: var(--verde); opacity: .75; }
 .item.excluido { opacity: .5; }
 .chip.vend { background: var(--verde); color: #fff; }
+.item.venda { border-left-color: var(--verde); }
+.venda-itens { margin: 6px 0; padding-left: 18px; }
+.venda-itens li { margin: 2px 0; }
+.venda-total { font-size: 16px; }

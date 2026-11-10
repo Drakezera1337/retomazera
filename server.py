@@ -250,6 +250,13 @@ def enviar_push(payload, inscricoes=None):
 def payload_dia(dia):
     itens = dia.get("itens") or []
     data_br = "/".join(reversed(dia.get("data", "").split("-"))) if dia.get("data") else ""
+    hoje = [a for a in dia.get("agendadas") or [] if a.get("data") == dia.get("data")]
+    if hoje:
+        n_v = len(hoje)
+        quem = " · ".join(f"{a.get('hora') or ''} {a.get('nome') or '?'}".strip() for a in hoje[:3])
+        extra = f" | +{len(itens)} para chamar" if itens else ""
+        return {"title": f"📦 {n_v} venda{'s' if n_v > 1 else ''} marcada{'s' if n_v > 1 else ''} para hoje",
+                "body": quem + extra, "tag": "retomazera-" + dia.get("data", ""), "data": dia.get("data", "")}
     if not itens:
         return {"title": "Retomazera", "body": f"Conversas de {data_br}: ninguém para retomar hoje.",
                 "tag": "retomazera-" + dia.get("data", ""), "data": dia.get("data", "")}
@@ -287,8 +294,23 @@ def salvar_dia(corpo):
             "ultimaMsg": str(x.get("ultimaMsg") or "")[:300],
             "quando": str(x.get("quando") or "")[:20],
         })
+    agendadas = []
+    for x in corpo.get("agendadas") or []:
+        if not isinstance(x, dict) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(x.get("data") or "")):
+            continue
+        txt = lambda k, n=200: str(x.get(k) or "")[:n]
+        itens_v = [{"descricao": str(i.get("descricao") or "")[:120], "valor": i.get("valor")}
+                   for i in (x.get("itens") or []) if isinstance(i, dict)][:10]
+        agendadas.append({
+            "nome": txt("nome", 80), "canal": txt("canal", 20), "contato": txt("contato"),
+            "data": txt("data", 10), "hora": txt("hora", 30), "local": txt("local", 200), "entrega": txt("entrega", 60),
+            "itens": itens_v, "total": x.get("total"), "pagamento": txt("pagamento", 200),
+            "entrada": txt("entrada", 200), "status": txt("status", 20) or "confirmada",
+            "observacoes": txt("observacoes", 400), "resumo": txt("resumo", 400),
+        })
     dia = {"data": data, "geradoEm": int(time.time() * 1000), "resumo": str(corpo.get("resumo") or "")[:1500],
-           "fontes": corpo.get("fontes") if isinstance(corpo.get("fontes"), dict) else {}, "itens": limpos}
+           "fontes": corpo.get("fontes") if isinstance(corpo.get("fontes"), dict) else {}, "itens": limpos,
+           "agendadas": agendadas}
     os.makedirs(PASTA_DIAS, exist_ok=True)
     with open(os.path.join(PASTA_DIAS, data + ".json"), "w", encoding="utf-8") as f:
         json.dump(dia, f, ensure_ascii=False, indent=1)

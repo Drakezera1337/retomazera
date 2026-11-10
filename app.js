@@ -99,18 +99,21 @@ async function marcar(chave, campo, ligadoAgora) {
     [campo]: valor, ts: Date.now(),
     ...(campo === 'vendido' && valor ? { vendidoEm: Date.now(), vendas: (atual.vendas || 0) + 1 } : {}),
   };
-  S.acoes = { ...S.acoes, [chave]: novo };
-  rotear();
   if (campo === 'excluido' && valor) toast('Excluído — não volta a ser sugerido. Para desfazer: "mostrar excluídos" no fim da lista.');
   if (campo === 'vendido' && valor) toast('Marcado como vendido 💰 — lembre de lançar a venda na Gestão.');
-  // grava em fila (um clique depois do outro não se atropela)
+  salvarAcoes({ [chave]: novo });
+}
+// grava ações (no PC pelo servidor; no celular direto no Gist), em fila para um clique não atropelar o outro
+function salvarAcoes(novas) {
+  S.acoes = { ...S.acoes, ...novas };
+  rotear();
   filaGravar = filaGravar.then(async () => {
     try {
       if (NO_PC) {
-        const r = await api('acoes', { method: 'POST', body: { [chave]: novo } });
+        const r = await api('acoes', { method: 'POST', body: novas });
         if (!r.ok) throw new Error(r.erro || 'servidor recusou');
       } else if (Sync.enabled()) {
-        const pend = { ...lerJSON(K.acoesPendentes, {}), [chave]: novo };
+        const pend = { ...lerJSON(K.acoesPendentes, {}), ...novas };
         gravarJSON(K.acoesPendentes, pend);
         const { 'acoes.json': remoto } = await Sync.ler({ 'acoes.json': {} });
         const junto = juntarAcoes(remoto || {}, pend);
@@ -122,6 +125,89 @@ async function marcar(chave, campo, ligadoAgora) {
       toast(`Salvo só neste aparelho por enquanto (${err.message}); envio de novo depois.`);
     }
   });
+}
+
+// ---------------------------------------------------------------- vendas marcadas
+// A análise do Claude acha nas conversas as vendas combinadas para um dia ("agendadas").
+// Junta as de todas as listas (a lista mais nova vale, se o cliente remarcou) e mostra as de hoje.
+function hojeIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function vendasMarcadas() {
+  const porCliente = {};
+  for (const dia of [...S.dias].sort((a, b) => (a.geradoEm || 0) - (b.geradoEm || 0))) {
+    for (const v of dia.agendadas || []) porCliente[chaveCliente(v)] = { ...v, _listaEm: dia.geradoEm };
+  }
+  return Object.values(porCliente).map((v) => ({ ...v, _chave: `venda:${chaveCliente(v)}:${v.data}` }))
+    .sort((a, b) => (a.data + (a.hora || '')).localeCompare(b.data + (b.hora || '')));
+}
+const brlV = (v) => (v == null || v === '' || isNaN(Number(v)) ? '' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
+function textoVenda(v) {
+  return [`${v.nome}${foneBR(v) ? ' ' + foneBR(v) : ''} — ${dataBR(v.data, false)}${v.hora ? ' ' + v.hora : ''}`,
+    v.local ? `Local: ${v.local}${v.entrega ? ` (${v.entrega})` : ''}` : '',
+    ...(v.itens || []).map((i) => `• ${i.descricao}${brlV(i.valor) ? ' — ' + brlV(i.valor) : ''}`),
+    brlV(v.total) ? `Total: ${brlV(v.total)}` : '', v.pagamento ? `Pagamento: ${v.pagamento}` : '',
+    v.entrada ? `Entrada: ${v.entrada}` : '', v.observacoes ? `Obs.: ${v.observacoes}` : ''].filter(Boolean).join('\n');
+}
+function cartaoVenda(v) {
+  const [cls, nomeCanal] = CANAIS[(v.canal || '').toLowerCase()] || ['', v.canal || '—'];
+  const st = S.acoes[v._chave] || {};
+  S.cards[v._chave] = v;
+  const fone = foneBR(v);
+  const link = linkConversa(v);
+  const atrasada = v.data < hojeIso();
+  return `<div class="item venda ${st.concluida ? 'vendido' : ''}">
+    <div class="item-topo">
+      <span class="item-nome">${esc(v.nome || 'Cliente')}${fone ? ` <span class="item-fone">${esc(fone)}</span>` : ''}</span>
+      <span class="chip ${cls}">${esc(nomeCanal)}</span>
+      ${st.concluida ? '<span class="chip vend">Concluída</span>' : v.status === 'a confirmar' ? '<span class="chip media">A confirmar</span>' : '<span class="chip vend">Confirmada</span>'}
+    </div>
+    <p><b>${atrasada ? `⚠️ Era ${esc(dataBR(v.data, false))}` : v.data === hojeIso() ? 'Hoje' : esc(dataBR(v.data))}${v.hora ? ` · 🕒 ${esc(v.hora)}` : ''}</b>${v.local ? ` · 📍 ${esc(v.local)}` : ''}${v.entrega ? ` <span class="sub">(${esc(v.entrega)})</span>` : ''}</p>
+    ${(v.itens || []).length ? `<ul class="venda-itens">${v.itens.map((i) => `<li>${esc(i.descricao)}${brlV(i.valor) ? ` <span class="sub">— ${esc(brlV(i.valor))}</span>` : ''}</li>`).join('')}</ul>` : ''}
+    ${brlV(v.total) ? `<p class="venda-total">Total: <b>${esc(brlV(v.total))}</b></p>` : ''}
+    ${v.pagamento ? `<p>💳 ${esc(v.pagamento)}</p>` : ''}
+    ${v.entrada ? `<p>🔁 Entrada: ${esc(v.entrada)}</p>` : ''}
+    ${v.observacoes ? `<p>📝 ${esc(v.observacoes)}</p>` : ''}
+    ${v.resumo ? `<p class="sub">${esc(v.resumo)}</p>` : ''}
+    <div class="acoes">
+      ${link ? `<a class="btn btn-verde" href="${esc(link.split('?')[0])}" target="_blank" rel="noopener">💬 Abrir conversa</a>` : ''}
+      <button class="btn" data-copiar-venda="${esc(v._chave)}">📋 Copiar</button>
+    </div>
+    <div class="acoes">
+      <button class="btn btn-mini ${st.concluida ? 'ligado' : ''}" data-venda="concluida" data-chave="${esc(v._chave)}">${st.concluida ? '↩️ Desfazer' : '✅ Vendido'}</button>
+      ${st.concluida ? '' : `<button class="btn btn-mini" data-venda="cancelada" data-chave="${esc(v._chave)}">❌ Desmarcou</button>`}
+    </div>
+  </div>`;
+}
+function marcarVenda(chaveVenda, campo) {
+  const v = S.cards[chaveVenda] || {};
+  const atual = S.acoes[chaveVenda] || {};
+  const valor = !atual[campo];
+  const novas = { [chaveVenda]: { ...atual, nome: v.nome, canal: v.canal, data: v.data, [campo]: valor, ts: Date.now() } };
+  // venda concluída = cliente vendido (sai das sugestões; se voltar a negociar, aparece com "⭐ Já comprou")
+  if (campo === 'concluida') {
+    const ck = chaveCliente(v), c = S.acoes[ck] || {};
+    novas[ck] = { ...c, nome: v.nome, canal: v.canal, contato: v.contato, vendido: valor, ...(valor ? { vendidoEm: Date.now(), vendas: (c.vendas || 0) + 1 } : {}), ts: Date.now() };
+    if (valor) toast('Venda concluída 💰 — lembre de lançar na Gestão.');
+  }
+  if (campo === 'cancelada' && valor) toast('Venda tirada da lista.');
+  salvarAcoes(novas);
+}
+function blocoVendas() {
+  const hoje = hojeIso();
+  const limiteAtraso = new Date(Date.now() - 3 * 864e5);
+  const todas = vendasMarcadas().filter((v) => !(S.acoes[v._chave] || {}).cancelada);
+  const doDia = todas.filter((v) => v.data === hoje);
+  const atrasadas = todas.filter((v) => v.data < hoje && new Date(v.data) >= limiteAtraso && !(S.acoes[v._chave] || {}).concluida);
+  const proximas = todas.filter((v) => v.data > hoje);
+  if (!doDia.length && !atrasadas.length && !proximas.length) return '';
+  const total = doDia.filter((v) => !(S.acoes[v._chave] || {}).concluida).reduce((s, v) => s + (Number(v.total) || 0), 0);
+  return `<h2 style="margin:4px 0 8px">📦 Vendas do dia${doDia.length ? ` (${doDia.length})` : ''}</h2>
+    ${doDia.length ? `${total ? `<p class="sub">A receber hoje: <b>${esc(brlV(total))}</b></p>` : ''}${doDia.map(cartaoVenda).join('')}` : '<p class="sub">Nenhuma venda marcada para hoje.</p>'}
+    ${atrasadas.length ? `<h2 style="margin:14px 0 8px">⚠️ Ficaram pendentes</h2>${atrasadas.map(cartaoVenda).join('')}` : ''}
+    ${proximas.length ? `<h2 style="margin:14px 0 8px">🗓️ Próximas</h2>${proximas.map(cartaoVenda).join('')}` : ''}
+    <h2 style="margin:18px 0 8px">📲 Para chamar</h2>`;
 }
 
 // ---------------------------------------------------------------- telas
@@ -220,6 +306,7 @@ function telaDia(dia, titulo) {
       <span class="chip">${itens.length} para chamar · ${pendentes} pendente(s)</span>
       ${Object.entries(porCanal).map(([c, n]) => { const [cls, nm] = CANAIS[c] || ['', c]; return `<span class="chip ${cls}">${esc(nm)} ${n}</span>`; }).join('')}
     </div>
+    ${titulo === 'Chamar hoje' ? blocoVendas() : ''}
     ${fixadosAntigos.length ? `<h2 style="margin:4px 0 8px">📌 Fixados</h2>${fixadosAntigos.map(cartao).join('')}<h2 style="margin:14px 0 8px">Lista do dia</h2>` : ''}
     ${itens.length ? itens.map(cartao).join('') : '<div class="vazio">Ninguém para retomar a partir desse dia. 👍</div>'}
     ${excluidos.length ? `<p class="sub"><a href="#" data-mostrar-excluidos="1">🗑️ ${excluidos.length} excluído(s) — ${S.mostrarExcluidos ? 'esconder' : 'mostrar'}</a></p>${S.mostrarExcluidos ? excluidos.map(cartao).join('') : ''}` : ''}
@@ -508,6 +595,12 @@ document.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-acao]');
   if (b) { marcar(b.dataset.chave, b.dataset.acao, b.dataset.ligado === '1'); return; }
   if (e.target.closest('[data-mostrar-excluidos]')) { e.preventDefault(); S.mostrarExcluidos = !S.mostrarExcluidos; rotear(); }
+  const bv = e.target.closest('[data-venda]');
+  if (bv) { marcarVenda(bv.dataset.chave, bv.dataset.venda); return; }
+  const cv = e.target.closest('[data-copiar-venda]');
+  if (cv) {
+    try { await navigator.clipboard.writeText(textoVenda(S.cards[cv.dataset.copiarVenda] || {})); toast('Resumo da venda copiado'); } catch { toast('Não consegui copiar'); }
+  }
 });
 window.addEventListener('hashchange', rotear);
 navigator.serviceWorker?.addEventListener('message', (e) => {
