@@ -90,3 +90,4 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 .unidade-txt .para { color: var(--suave); }
 .st-ok { color: var(--verde); font-weight: 600; } .st-chegando { color: var(--media); font-weight: 600; }
 .lucro { color: var(--verde); }
+.unidade select.vincular { margin-top: 6px; padding: 6px 8px; font-size: 13px; width: auto; max-width: 100%; }

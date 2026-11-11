@@ -261,27 +261,52 @@ function alocarFila() {
   const serve = (x, e) => (x.atende ? x.atende.includes(e.chave) : x.para === e.chave);
   const fora = (e) => S.acoes[chaveCliente(e)]?.semUnidade || [];
   const dar = (e, u) => { porUid[u.uid] = e; porChave[e.chave] = u; };
-  // 1) divisão normal; 2) quem teve a unidade desvinculada larga ela (que fica livre, sem mexer nos outros);
-  // 3) quem ficou sem unidade pega uma que sobrou e que não foi desvinculada dele
+  const tirar = (u) => { const e = porUid[u.uid]; if (e) delete porChave[e.chave]; delete porUid[u.uid]; };
+  // 1) divisão normal; 2) vínculos manuais (o mais recente vence) tomam a unidade de quem estava com ela;
+  // 3) quem teve a unidade desvinculada larga ela (fica livre, sem mexer nos outros);
+  // 4) quem ficou sem unidade pega uma que sobrou e que não foi desvinculada dele
   for (const e of fila) { const u = S.estoque.find((x) => !porUid[x.uid] && serve(x, e)); if (u) dar(e, u); }
   const largadas = new Set();
-  for (const e of fila) { const u = porChave[e.chave]; if (u && fora(e).includes(u.uid)) { delete porUid[u.uid]; delete porChave[e.chave]; largadas.add(u.uid); } }
+  const manuais = fila.map((e) => ({ e, v: S.acoes[chaveCliente(e)]?.vinculos?.[e.familia] }))
+    .filter((m) => m.v && S.estoque.some((x) => x.uid === m.v.uid)).sort((a, b) => (a.v.em || 0) - (b.v.em || 0));
+  const fixos = new Set();
+  for (const { e, v } of manuais) {
+    const u = S.estoque.find((x) => x.uid === v.uid);
+    const antiga = porChave[e.chave];
+    if (antiga && antiga.uid !== u.uid) { tirar(antiga); largadas.add(antiga.uid); }
+    if (porUid[u.uid] && fixos.has(u.uid)) { const outro = porUid[u.uid]; tirar(u); delete porChave[outro.chave]; }
+    tirar(u); dar(e, u); fixos.add(u.uid);
+  }
+  for (const e of fila) { const u = porChave[e.chave]; if (u && !fixos.has(u.uid) && fora(e).includes(u.uid)) { delete porUid[u.uid]; delete porChave[e.chave]; largadas.add(u.uid); } }
   for (const e of fila) {
     if (porChave[e.chave]) continue;
     const u = S.estoque.find((x) => !porUid[x.uid] && !largadas.has(x.uid) && !fora(e).includes(x.uid) && serve(x, e))
       || S.estoque.find((x) => !porUid[x.uid] && !fora(e).includes(x.uid) && serve(x, e));
     if (u) dar(e, u);
   }
-  return { porUid, porChave };
+  return { porUid, porChave, fixos };
 }
-function vincular(chaveEspera, uid, desvincular) {
+// modo: 'desvincular' | 'desfazer' (tira o desvínculo) | 'manual' (liga esta unidade a este cliente)
+function vincular(chaveEspera, uid, modo) {
   const e = S.espera.find((x) => x.chave === chaveEspera);
   if (!e) return;
   const ck = chaveCliente(e), atual = S.acoes[ck] || {};
   const fora = new Set(atual.semUnidade || []);
-  desvincular ? fora.add(uid) : fora.delete(uid);
-  salvarAcoes({ [ck]: { ...atual, nome: e.nome, canal: e.canal, contato: e.contato, semUnidade: [...fora], ts: Date.now() } });
-  toast(desvincular ? `Desvinculado de ${e.nome}` : `Vinculado de novo a ${e.nome}`);
+  const vinculos = { ...(atual.vinculos || {}) };
+  if (modo === 'desvincular') { fora.add(uid); if (vinculos[e.familia]?.uid === uid) delete vinculos[e.familia]; }
+  if (modo === 'desfazer') fora.delete(uid);
+  if (modo === 'manual') { fora.delete(uid); vinculos[e.familia] = { uid, em: Date.now() }; }
+  const novas = { [ck]: { ...atual, nome: e.nome, canal: e.canal, contato: e.contato, semUnidade: [...fora], vinculos, ts: Date.now() } };
+  // quem tinha esta unidade fixada manualmente perde o vínculo
+  if (modo === 'manual') {
+    for (const o of esperaAtiva()) {
+      const ok = chaveCliente(o); if (ok === ck) continue;
+      const a = novas[ok] || S.acoes[ok];
+      if (a?.vinculos?.[o.familia]?.uid === uid) { const vs = { ...a.vinculos }; delete vs[o.familia]; novas[ok] = { ...a, vinculos: vs, ts: Date.now() }; }
+    }
+  }
+  salvarAcoes(novas);
+  toast(modo === 'desvincular' ? `Desvinculado de ${e.nome}` : modo === 'manual' ? `Vinculado a ${e.nome}` : `Vinculado de novo a ${e.nome}`);
 }
 const ICONE_FAMILIA = (f) => (/PS|PlayStation/i.test(f) ? '🎮' : /Xbox/i.test(f) ? '🟩' : /Switch/i.test(f) ? '🕹️' : /iPhone/i.test(f) ? '📱' : '🎮');
 function unidadeEstoque(u, aloc) {
@@ -294,7 +319,8 @@ function unidadeEstoque(u, aloc) {
     <div class="unidade-txt"><b>${esc(u.nome || u.item)}</b>
       <div>${st}</div>
       <div>Custo <b>${brlV(u.custo) || '—'}</b>${u.preco ? ` · Venda ${brlV(u.preco)}` : ''}${lucro != null ? ` · <span class="lucro">+${brlV(lucro)}</span>` : ''}</div>
-      <div class="para">${dono ? `➡️ Para <b>${esc(dono.nome)}</b> <button class="btn btn-mini" data-desvincular="${esc(dono.chave)}" data-uid="${esc(u.uid)}">✖ Desvincular</button>` : '🆓 Sem cliente da fila'}</div>
+      <div class="para">${dono ? `➡️ Para <b>${esc(dono.nome)}</b>${aloc.fixos.has(u.uid) ? ' 📌' : ''} <button class="btn btn-mini" data-desvincular="${esc(dono.chave)}" data-uid="${esc(u.uid)}">✖ Desvincular</button>` : '🆓 Sem cliente da fila'}</div>
+      <select class="vincular" data-vincular-uid="${esc(u.uid)}"><option value="">🔗 Vincular a outro cliente…</option>${esperaAtiva().filter((e) => e.familia === u.familia && e !== dono).map((e) => `<option value="${esc(e.chave)}">${esc(e.nome)}${aloc.porChave[e.chave] ? ' (troca a unidade dele)' : ''}</option>`).join('')}</select>
       ${desvinculados.map((e) => `<div class="para">🚫 Desvinculado de ${esc(e.nome)} <button class="btn btn-mini" data-revincular="${esc(e.chave)}" data-uid="${esc(u.uid)}">↩ Desfazer</button></div>`).join('')}</div></div>`;
 }
 function telaEspera() {
@@ -724,7 +750,7 @@ document.addEventListener('click', async (e) => {
     return;
   }
   const dv = e.target.closest('[data-desvincular],[data-revincular]');
-  if (dv) { vincular(dv.dataset.desvincular || dv.dataset.revincular, dv.dataset.uid, Boolean(dv.dataset.desvincular)); return; }
+  if (dv) { vincular(dv.dataset.desvincular || dv.dataset.revincular, dv.dataset.uid, dv.dataset.desvincular ? 'desvincular' : 'desfazer'); return; }
   const b = e.target.closest('[data-acao]');
   if (b) { marcar(b.dataset.chave, b.dataset.acao, b.dataset.ligado === '1'); return; }
   if (e.target.closest('[data-mostrar-excluidos]')) { e.preventDefault(); S.mostrarExcluidos = !S.mostrarExcluidos; rotear(); }
@@ -736,6 +762,10 @@ document.addEventListener('click', async (e) => {
   if (cv) {
     try { await navigator.clipboard.writeText(textoVenda(S.cards[cv.dataset.copiarVenda] || {})); toast('Resumo da venda copiado'); } catch { toast('Não consegui copiar'); }
   }
+});
+document.addEventListener('change', (e) => {
+  const sel = e.target.closest('[data-vincular-uid]');
+  if (sel && sel.value) vincular(sel.value, sel.dataset.vincularUid, 'manual');
 });
 // trocou de tela: volta ao topo (agora quem rola é o <main>, não a página)
 window.addEventListener('hashchange', () => { rotear(); $('#view').scrollTop = 0; });
