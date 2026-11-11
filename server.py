@@ -256,6 +256,29 @@ def estoque_disponivel():
     return saida
 
 
+def atende(espera, item):
+    """O item do estoque atende o que o cliente pediu? Além da família, confere armazenamento e leitor/digital."""
+    desejo = unicodedata_sem_acento(f"{espera.get('produto') or ''} {espera.get('detalhes') or ''}").lower()
+    t = unicodedata_sem_acento(str(item.get("item") or "")).lower()
+    # armazenamento: "1TB" pedido (e não "não quer 1TB") → item precisa ser 1TB; PS5 Fat/original e "825" são 825GB
+    if re.search(r"\b1 ?tb\b", desejo) and not re.search(r"nao quer[^.]{0,20}1 ?tb", desejo):
+        tem_1tb = re.search(r"\b1 ?tb\b", t) or ("slim" in t and "825" not in t)
+        if not tem_1tb:
+            return False
+    if re.search(r"\b2 ?tb\b", desejo) and not re.search(r"\b2 ?tb\b", t):
+        return False
+    if re.search(r"\b512 ?gb?\b", desejo) and re.search(r"\b1 ?tb\b", t):
+        pass  # quem pede 512 aceita maior
+    # leitor x digital
+    quer_digital = "digital" in desejo and not re.search(r"leitor|disco|midia fisica", desejo)
+    quer_leitor = bool(re.search(r"com leitor|leitor de disco|midia fisica|com disco", desejo))
+    if quer_digital and "digital" not in t:
+        return False
+    if quer_leitor and "digital" in t:
+        return False
+    return True
+
+
 def verificar_espera(notificar=True):
     """Cruza a fila com o estoque; cliente com o modelo disponível ganha 'chegou' e vira notificação (1x por item)."""
     reg = ler_espera()
@@ -268,7 +291,7 @@ def verificar_espera(notificar=True):
         cliente = acoes.get(k.split("|")[0], {})
         if cliente.get("excluido"):
             continue
-        disp = [i for i in estoque if i["familia"] == e.get("familia")]
+        disp = [i for i in estoque if i["familia"] == e.get("familia") and atende(e, i)]
         if not disp:
             if e.get("chegou"):
                 e["chegou"] = None  # o item foi vendido para outra pessoa: volta a esperar
