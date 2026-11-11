@@ -151,7 +151,7 @@ function textoVenda(v) {
     v.entrada ? `Entrada: ${v.entrada}` : '', v.observacoes ? `Obs.: ${v.observacoes}` : ''].filter(Boolean).join('\n');
 }
 function blocoUnidadesVenda(v) {
-  if (!S.estoque.length) return '';
+  if (!S.estoque.length || (S.acoes[v._chave] || {}).concluida) return '';
   const aloc = alocarVendas();
   return (v.itens || []).map((it, i) => ({ it, chave: `${v._chave}#${i}` })).map(({ it, chave }) => {
     const fam = S.estoque.find((u) => (u.atende || []).includes(chave))?.familia;
@@ -287,7 +287,8 @@ function itensConsoleVenda(v) {
 }
 function alocarVendas() {
   const porUid = {}, porItem = {};
-  const vendas = vendasMarcadas().filter((v) => !(S.acoes[v._chave] || {}).cancelada);
+  // venda concluída ou desmarcada não segura unidade (a vendida já sai do estoque na Gestão)
+  const vendas = vendasMarcadas().filter((v) => { const a = S.acoes[v._chave] || {}; return !a.cancelada && !a.concluida; });
   const itens = vendas.flatMap((v) => itensConsoleVenda(v).map((x) => ({ ...x, v })));
   for (const x of itens) {  // escolhas manuais primeiro
     const uid = S.acoes[x.chave]?.uid;

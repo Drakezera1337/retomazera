@@ -320,7 +320,7 @@ def itens_de_vendas(acoes):
         if (v.get("data") or "") < limite:
             continue
         vk = f"venda:{ck}:{v.get('data')}"
-        if acoes.get(vk, {}).get("cancelada"):
+        if acoes.get(vk, {}).get("cancelada") or acoes.get(vk, {}).get("concluida"):
             continue
         for i, it in enumerate(v.get("itens") or []):
             desc = str((it or {}).get("descricao") or "")
