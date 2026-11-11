@@ -255,7 +255,7 @@ function blocoChegou() {
 // unidades da Gestão (disponíveis e chegando) do modelo, com foto, custo e para quem cada uma vai
 const ICONE_FAMILIA = (f) => (/PS|PlayStation/i.test(f) ? '🎮' : /Xbox/i.test(f) ? '🟩' : /Switch/i.test(f) ? '🕹️' : /iPhone/i.test(f) ? '📱' : '🎮');
 function unidadeEstoque(u) {
-  const st = u.situacao === 'disponivel' ? '<span class="st-ok">✅ Disponível</span>' : `<span class="st-chegando">🚚 ${esc(u.status)}</span>`;
+  const st = u.situacao === 'disponivel' ? '<span class="st-ok">✅ Disponível</span>' : '<span class="st-chegando">🚚 Chegando</span>';
   const lucro = u.preco && u.custo ? Number(u.preco) - Number(u.custo) : null;
   return `<div class="unidade">
     ${u.foto ? `<img src="${u.foto}" alt="" loading="lazy">` : `<div class="sem-foto">${ICONE_FAMILIA(u.familia)}</div>`}

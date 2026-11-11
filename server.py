@@ -279,7 +279,7 @@ def atende(espera, item):
     return True
 
 
-STATUS_FILA = {"Aguardando venda": "disponivel", "Chegando": "chegando", "Aguardando envio": "chegando"}
+STATUS_FILA = {"Aguardando venda": "disponivel", "Chegando": "chegando"}  # "Aguardando envio" (vendedor ainda não mandou) fica de fora
 _miniaturas = {}
 
 
@@ -321,7 +321,7 @@ def estoque_fila(reg=None):
         linhas = c.execute(
             "select uid, coalesce(nullif(trim(console_nome),''),nome), nome, status_item, preco_compra, custo_reparo, "
             "preco_previsto, reparo, data_compra, fotos from produtos where (data_venda is null or data_venda='') "
-            "and status_item in ('Aguardando venda','Chegando','Aguardando envio')").fetchall()
+            "and status_item in ('Aguardando venda','Chegando')").fetchall()
         c.close()
     except sqlite3.Error as exc:
         print(f"[espera] não consegui ler a Gestão: {exc}")
