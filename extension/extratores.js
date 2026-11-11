@@ -254,7 +254,17 @@ async function extrairWhatsapp(desde, ignorar = [], limite = 60) {
 
   const pronto = await esperar(() => document.querySelector('#pane-side') && window.require && (() => { try { return window.require('WAWebCollections').Chat.getModelsArray().length > 0; } catch { return false; } })(), 90000);
   if (!pronto) return { erro: document.querySelector('canvas') ? 'WhatsApp Web deslogado (pede QR)' : 'WhatsApp Web não carregou', conversas: [] };
-  await sleep(5000); // termina de sincronizar
+  // WhatsApp Web recém-aberto ainda baixa as mensagens do celular: espera a sincronização terminar
+  // (some o aviso "Sincronizando…/Carregando…" da lista) e a lista de conversas parar de mudar.
+  await sleep(8000);
+  const sincronizando = () => /sincroniz|carregando (suas )?(conversas|mensagens)|syncing|loading (your )?(chats|messages)/i.test(document.querySelector('#side')?.innerText || '')
+    || !!document.querySelector('#side [role="progressbar"], [data-testid="chat-list-sync-progress"]');
+  for (let i = 0, ultimo = -1, iguais = 0; i < 60; i++) {
+    const t = Math.max(0, ...window.require('WAWebCollections').Chat.getModelsArray().map((c) => c.t || 0));
+    if (!sincronizando() && t === ultimo) { if (++iguais >= 3) break; } else iguais = 0;
+    ultimo = t;
+    await sleep(2000);
+  }
 
   const C = window.require('WAWebCollections');
   const chats = C.Chat.getModelsArray()
@@ -314,9 +324,27 @@ async function extrairWhatsapp(desde, ignorar = [], limite = 60) {
       if (j < 0) { ordem = S.concat(ordem); return S.length; }
       return 0;
     };
+    // espera a conversa terminar de carregar: a quantidade de mensagens na tela para de mudar
+    for (let i = 0, ultimo = -1, iguais = 0; i < 24; i++) {
+      const n = pane.querySelectorAll('[role="row"]').length;
+      if (n > 0 && n === ultimo) { if (++iguais >= 3) break; } else iguais = 0;
+      ultimo = n;
+      await sleep(500);
+    }
+    // botão "carregar mensagens mais antigas (do celular)": precisa de clique "de verdade" (eventos de ponteiro)
+    const clicarMaisAntigas = () => {
+      const b = [...pane.querySelectorAll('button, [role="button"], div')].find((e) => e.children.length < 4
+        && /mensagens mais antigas|older messages/i.test(e.innerText || ''));
+      if (!b) return false;
+      const alvo = b.closest('button, [role="button"]') || b;
+      for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+        alvo.dispatchEvent(new (t.startsWith('pointer') ? PointerEvent : MouseEvent)(t, { bubbles: true, cancelable: true, view: window }));
+      }
+      return true;
+    };
     pane.scrollTop = pane.scrollHeight; await sleep(800); snap();
-    let parado = 0;
-    for (let p = 0; p < 40; p++) {
+    let parado = 0, cliques = 0;
+    for (let p = 0; p < 50; p++) {
       // para quando já tem mensagens anteriores ao período (contexto suficiente)
       const antigas = ordem.map((k) => mapa.get(k)).filter((m) => m && !m.semData && dataDe(m.h) && !noPeriodo(dataDe(m.h), m.h.slice(0, 5))).length;
       if (antigas >= 8) break;
@@ -324,7 +352,16 @@ async function extrairWhatsapp(desde, ignorar = [], limite = 60) {
       pane.scrollTop = Math.max(0, st - pane.clientHeight * 0.6);
       await sleep(st === 0 ? 1500 : 450);
       const n = snap();
-      if (!n && st === 0 && pane.scrollHeight === h0) { if (++parado >= 3) break; } else parado = 0;
+      if (!n && st === 0 && pane.scrollHeight === h0) {
+        // chegou no topo sem novidade: tenta o botão das mensagens antigas (até 4x) antes de desistir
+        if (cliques < 4 && clicarMaisAntigas()) { cliques++; parado = 0; await sleep(3000); snap(); continue; }
+        // conversa curta (sem barra de rolagem) não dispara o "carregar mais": simula rolar para cima
+        pane.scrollTop = 30; await sleep(150); pane.scrollTop = 0;
+        pane.dispatchEvent(new WheelEvent('wheel', { deltaY: -800, bubbles: true, cancelable: true }));
+        pane.dispatchEvent(new Event('scroll', { bubbles: true }));
+        if (++parado >= 4) break;
+        await sleep(1500);
+      } else parado = 0;
     }
     // o cabeçalho pode começar pelas iniciais da foto ("P"): usa o texto todo do cabeçalho para conferir
     const cab = main.querySelector('header');
