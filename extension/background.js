@@ -13,7 +13,7 @@ const FONTES = {
   instagram: { nome: 'Instagram', url: 'https://www.instagram.com/direct/inbox/', padrao: null, func: extrairInstagram },
 };
 const PADRAO = { fontes: { whatsapp: false, facebook: false, olx: false, instagram: false }, horaMin: 6, espera: 3, perfil: '',
-  noite: true, horaNoite: 21,
+  noite: true, horaNoite: 21, avisos: true,
   ignorar: ['Pai - Pessoal', 'Mãe', 'Amor', 'Santo Burger', 'Lucian'] };
 
 async function config() {
@@ -92,6 +92,24 @@ function esperarCarregar(tabId, ms = 60000) {
   });
 }
 
+// Notificação do Windows com o progresso: uma só (mesmo id), recriada a cada mudança para aparecer de novo.
+const ICONE = { aguardando: '⏸️', coletando: '⏳', ok: '✅', erro: '❌' };
+async function avisarProgresso(c, origem, prog, fim) {
+  if (c.avisos === false) return;
+  const turno = origem === 'noite' ? 'da noite' : origem === 'manual' ? 'manual' : 'da manhã';
+  const linhas = Object.entries(prog).map(([k, p]) => `${FONTES[k].nome} ${ICONE[p.estado]} ${p.estado === 'ok' ? `OK (${p.n} conversa${p.n === 1 ? '' : 's'})` : p.estado === 'erro' ? `erro: ${p.msg}` : p.estado}`);
+  const titulo = fim
+    ? `Retomazera: coleta ${turno} concluída${c.perfil ? ` · ${c.perfil}` : ''}`
+    : `Retomazera: coletando ${turno}${c.perfil ? ` · ${c.perfil}` : ''}`;
+  const opcoes = { type: 'basic', iconUrl: 'icon.png', title: titulo, message: linhas.join('\n').slice(0, 500),
+    priority: 1, silent: !fim, requireInteraction: false };
+  if (fim) opcoes.contextMessage = 'A análise roda no PC e o resumo chega no celular em alguns minutos.';
+  try {
+    await chrome.notifications.clear('rz-coleta');
+    await chrome.notifications.create('rz-coleta', opcoes);
+  } catch { /* sem permissão de notificação: segue sem aviso */ }
+}
+
 let rodando = false;
 async function coletar(origem) {
   if (rodando) return;
@@ -102,11 +120,14 @@ async function coletar(origem) {
   const inicioAnterior = anterior && !anterior.rodando ? anterior.inicio : null;
   const ativas = Object.keys(FONTES).filter((k) => c.fontes[k]);
   await estado({ rodando: true, inicio: Date.now(), data, origem, fontes: {} });
+  const prog = Object.fromEntries(ativas.map((k) => [k, { estado: 'aguardando' }]));
   let janela = null, algumaOk = false;
   try {
     for (const k of ativas) {
       const f = FONTES[k];
       await estado({ atual: f.nome });
+      prog[k] = { estado: 'coletando' };
+      await avisarProgresso(c, origem, prog, false);
       let tabId = null, abriuAqui = false;
       try {
         // WhatsApp Web só funciona numa aba: reaproveita a que já estiver aberta
@@ -136,10 +157,12 @@ async function coletar(origem) {
         const resp = await fetch(`${SERVIDOR}/api/coleta`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
         const j = await resp.json().catch(() => ({}));
         const n = (r.conversas || []).length;
+        prog[k] = r.erro || !j.ok ? { estado: 'erro', msg: String(r.erro || j.erro || resp.status).slice(0, 60) } : { estado: 'ok', n };
         if (j.ok && !r.erro && origem === 'auto') { await marcarUltima(k, inicioFonte); algumaOk = true; }
         if (j.ok && !r.erro && origem === 'noite') algumaOk = true;
         await estado({ fontes: { ...((await chrome.storage.local.get('est')).est.fontes || {}), [k]: r.erro ? `erro: ${r.erro}` : (j.ok ? `${n} conversa(s)` : `servidor: ${j.erro || resp.status}`) } });
       } catch (e) {
+        prog[k] = { estado: 'erro', msg: String(e.message || e).slice(0, 60) };
         await estado({ fontes: { ...((await chrome.storage.local.get('est')).est.fontes || {}), [k]: `erro: ${String(e.message || e).slice(0, 150)}` } });
       } finally {
         if (abriuAqui && tabId && janela && (await chrome.tabs.query({ windowId: janela.id })).length > 1) {
@@ -149,6 +172,7 @@ async function coletar(origem) {
     }
   } finally {
     if (janela) await chrome.windows.remove(janela.id).catch(() => {});
+    if (ativas.length) await avisarProgresso(c, origem, prog, true);
     if (origem === 'auto' || origem === 'noite') {
       const chave = origem === 'noite' ? 'autoNoite' : 'auto';
       const { [chave]: ant } = await chrome.storage.local.get(chave);
@@ -159,6 +183,10 @@ async function coletar(origem) {
     await estado({ rodando: false, atual: '', fim: Date.now() });
   }
 }
+
+chrome.notifications.onClicked.addListener((id) => {
+  if (id === 'rz-coleta') { chrome.tabs.create({ url: `${SERVIDOR}/` }); chrome.notifications.clear(id); }
+});
 
 chrome.runtime.onMessage.addListener((msg, _s, responder) => {
   if (msg.tipo === 'coletar') { coletar(msg.turno === 'noite' ? 'noite' : 'manual'); responder({ ok: true }); }
