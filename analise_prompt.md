@@ -19,9 +19,10 @@ AÇÕES DO JOÃO NOS CARDS: leia o arquivo acoes.json (na pasta atual; se não e
 - "chamado": data (ms) → o João já chamou depois da sugestão; se o cliente não respondeu, pode sugerir de novo com outra abordagem.
 
 CONFERIR NA GESTÃO (antes de decidir): rode, só leitura,
-python -X utf8 -c "import sqlite3;c=sqlite3.connect('file:D:/Loja/Programa/Gestao/dist/GestaoVendas/gestao_vendas.db?mode=ro',uri=True);print('VENDIDOS 7d:',c.execute(\"select nome_comprador,substr(tel_comprador,-8),coalesce(nullif(console_nome,''),nome),data_venda from produtos where data_venda>=date('now','-7 day')\").fetchall());print('ESTOQUE:',c.execute(\"select coalesce(nullif(console_nome,''),nome),preco_previsto from produtos where (data_venda is null or data_venda='') and status_item in ('Aguardando venda','Chegando')\").fetchall())"
+python -X utf8 -c "import sqlite3;c=sqlite3.connect('file:D:/Loja/Programa/Gestao/dist/GestaoVendas/gestao_vendas.db?mode=ro',uri=True);print('VENDIDOS 7d:',c.execute(\"select nome_comprador,substr(tel_comprador,-8),coalesce(nullif(console_nome,''),nome),data_venda from produtos where data_venda>=date('now','-7 day')\").fetchall());print('ESTOQUE (item, preço previsto, status, reparo):',c.execute(\"select coalesce(nullif(console_nome,''),nome),preco_previsto,status_item,reparo from produtos where (data_venda is null or data_venda='') and status_item in ('Aguardando venda','Chegando','Aguardando envio')\").fetchall())"
 - Quem já comprou (nome/últimos 8 dígitos do telefone batem) NÃO entra na lista.
 - Use o estoque para sugerir: se o cliente queria um modelo que agora tem no estoque, diga isso na mensagem (é prioridade alta); se não tem, sugira uma alternativa que tenha.
+- DISPONÍVEL é só status "Aguardando venda". "Chegando"/"Aguardando envio" = ainda a caminho (diga "chega essa semana", nunca "já tem"). Item com reparo=1 ou preço previsto muito abaixo do normal do modelo (ex.: Series S por R$600, PS4 por R$400) é defeito/peça: NÃO conte como disponível para cliente.
 
 QUEM ENTRA NA LISTA (cliente demonstrou interesse em COMPRAR e a venda não fechou):
 - Disse "vou ver / vou pensar / depois te falo / te confirmo / amanhã te chamo" e não fechou.
