@@ -279,6 +279,82 @@ def atende(espera, item):
     return True
 
 
+STATUS_FILA = {"Aguardando venda": "disponivel", "Chegando": "chegando", "Aguardando envio": "chegando"}
+_miniaturas = {}
+
+
+def miniatura(caminho):
+    """Primeira foto do item reduzida (JPEG ~240px em data URI) para ir no Gist sem pesar."""
+    if not caminho or not os.path.exists(caminho):
+        return ""
+    chave = (caminho, os.path.getmtime(caminho))
+    if chave not in _miniaturas:
+        try:
+            from PIL import Image, ImageOps
+            import base64
+            import io
+            with Image.open(caminho) as im:
+                im = ImageOps.exif_transpose(im).convert("RGB")
+                im.thumbnail((240, 240))
+                buf = io.BytesIO()
+                im.save(buf, "JPEG", quality=68, optimize=True)
+            _miniaturas[chave] = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[espera] miniatura {caminho}: {exc}")
+            _miniaturas[chave] = ""
+    return _miniaturas[chave]
+
+
+def estoque_fila(reg=None):
+    """Unidades na Gestão (disponíveis e a caminho) dos modelos que alguém da fila espera, com foto, custo e
+    para qual cliente cada uma vai: o primeiro da fila fica com a primeira unidade que atende (disponível antes
+    de chegando; dentro disso, a comprada há mais tempo)."""
+    reg = ler_espera() if reg is None else reg
+    acoes = ler_acoes()
+    fila = [(k, e) for k, e in reg.items()
+            if not acoes.get(k.split("|")[0], {}).get("excluido") and not acoes.get(k.split("|")[0], {}).get("vendido")]
+    familias = {e.get("familia") for _, e in fila}
+    if not familias:
+        return []
+    try:
+        c = sqlite3.connect(GESTAO_DB, uri=True, timeout=10)
+        linhas = c.execute(
+            "select uid, coalesce(nullif(trim(console_nome),''),nome), nome, status_item, preco_compra, custo_reparo, "
+            "preco_previsto, reparo, data_compra, fotos from produtos where (data_venda is null or data_venda='') "
+            "and status_item in ('Aguardando venda','Chegando','Aguardando envio')").fetchall()
+        c.close()
+    except sqlite3.Error as exc:
+        print(f"[espera] não consegui ler a Gestão: {exc}")
+        return []
+    acessorio = re.compile(r"\b(controle|jogo|cabo|fonte|capa|case|headset|fone|carregador|skin|suporte|base|pe[cç]a|placa|sucata|defeito|feira do rolo)\b", re.I)
+    minimo = {"PS5": 2500, "Xbox Series X": 2500, "Xbox Series S": 1500, "PS4 Pro": 1200, "PS4": 800, "Xbox One": 700,
+              "Nintendo Switch": 1000, "PS3": 300}
+    unidades = []
+    for uid, console, nome, status, compra, reparo_v, prev, reparo, dc, fotos in linhas:
+        texto = f"{console} {nome}"
+        fam = familia(texto)
+        if fam not in familias or acessorio.search(texto.split("|")[0]):
+            continue
+        if prev and fam in minimo and float(prev) < minimo[fam]:
+            continue  # preço muito abaixo do normal: defeito/peça
+        try:
+            lista_fotos = json.loads(fotos) if fotos else []
+        except ValueError:
+            lista_fotos = []
+        unidades.append({"uid": uid, "item": (console or nome or "").strip()[:120], "nome": (nome or "").strip()[:200],
+                         "familia": fam, "status": status, "situacao": STATUS_FILA[status],
+                         "custo": round(float(compra or 0) + float(reparo_v or 0), 2), "preco": prev, "compra": dc,
+                         "foto": miniatura(lista_fotos[0]) if lista_fotos else "", "para": "", "paraNome": ""})
+    unidades.sort(key=lambda u: (u["familia"], u["situacao"] != "disponivel", u["compra"] or ""))
+    usadas = set()
+    for k, e in sorted(fila, key=lambda x: x[1].get("desde") or ""):
+        u = next((u for u in unidades if u["uid"] not in usadas and u["familia"] == e.get("familia") and atende(e, u)), None)
+        if u:
+            usadas.add(u["uid"])
+            u["para"], u["paraNome"] = k, e.get("nome") or ""
+    return unidades
+
+
 def verificar_espera(notificar=True):
     """Cruza a fila com o estoque; cliente com o modelo disponível ganha 'chegou' e vira notificação (1x por item)."""
     reg = ler_espera()
@@ -325,10 +401,20 @@ def verificar_espera(notificar=True):
     return novos
 
 
+def espera_publica():
+    return sorted(({**v, "chave": k} for k, v in ler_espera().items()), key=lambda v: v.get("desde") or "")
+
+
 def laco_espera():
+    assinatura = None
     while True:
         try:
             verificar_espera()
+            # estoque mudou na Gestão (chegou, vendeu, mudou custo/foto)? republica para a aba Fila do celular
+            atual = json.dumps([[u["uid"], u["status"], u["custo"], u["preco"], u["para"], bool(u["foto"])] for u in estoque_fila()])
+            if assinatura is not None and atual != assinatura:
+                publicar_gist()
+            assinatura = atual
         except Exception as exc:  # noqa: BLE001
             print(f"[espera] {exc}")
         time.sleep(600)
@@ -418,7 +504,7 @@ def publicar_gist():
     if not gist_cfg():
         return False
     corpo = {"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "retornos": retornos_publicos(),
-             "espera": sorted(ler_espera().values(), key=lambda v: v.get("desde") or ""),
+             "espera": espera_publica(), "estoque": estoque_fila(),
              "ts": int(time.time() * 1000)}
     gist_request("PATCH", {"files": {"lembretes.json": {"content": json.dumps(corpo, ensure_ascii=False)}}})
     return True
@@ -958,7 +1044,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/lembretes":
             return self._json({"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "acoes": ler_acoes(),
                                "retornos": retornos_publicos(),
-                               "espera": sorted(ler_espera().values(), key=lambda v: v.get("desde") or ""),
+                               "espera": espera_publica(), "estoque": estoque_fila(),
                                "ts": int(time.time() * 1000)})
         if path == "/api/coletas":
             data = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("data", [""])[0]

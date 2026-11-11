@@ -79,3 +79,14 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 .check:last-child { border-bottom: 0; }
 .check input { width: 20px; height: 20px; margin-top: 1px; flex: none; accent-color: var(--verde); }
 .check.ok span { text-decoration: line-through; color: var(--suave); }
+
+/* aba Fila: unidades do estoque da Gestão */
+.estoque { background: var(--card); border: 1px solid var(--borda); border-radius: 14px; padding: 8px 12px; margin-bottom: 10px; }
+.estoque summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.unidade { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--borda); }
+.unidade img, .unidade .sem-foto { flex: none; width: 72px; height: 72px; border-radius: 10px; object-fit: cover; background: var(--fundo); }
+.unidade .sem-foto { display: flex; align-items: center; justify-content: center; font-size: 30px; }
+.unidade-txt { min-width: 0; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+.unidade-txt .para { color: var(--suave); }
+.st-ok { color: var(--verde); font-weight: 600; } .st-chegando { color: var(--media); font-weight: 600; }
+.lucro { color: var(--verde); }

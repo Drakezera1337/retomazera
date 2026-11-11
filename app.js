@@ -7,7 +7,7 @@ const K = { cache: 'retomazera:cache', push: 'retomazera:push', acoesPendentes: 
 const lerJSON = (k, p) => { try { return JSON.parse(localStorage.getItem(k)) ?? p; } catch { return p; } };
 const gravarJSON = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem storage */ } };
 
-const S = { dias: [], semanas: [], noites: [], retornos: [], espera: [], acoes: {}, cards: {}, mostrarExcluidos: false, ts: 0, status: null, carregando: false, erro: '' };
+const S = { dias: [], semanas: [], noites: [], retornos: [], espera: [], estoque: [], acoes: {}, cards: {}, mostrarExcluidos: false, ts: 0, status: null, carregando: false, erro: '' };
 
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.hidden = false;
@@ -39,13 +39,13 @@ async function carregar() {
   try {
     if (NO_PC) {
       const r = await api('lembretes');
-      S.dias = r.dias || []; S.semanas = r.semanas || []; S.noites = r.noites || []; S.retornos = r.retornos || []; S.espera = r.espera || []; S.acoes = r.acoes || {}; S.ts = r.ts;
+      S.dias = r.dias || []; S.semanas = r.semanas || []; S.noites = r.noites || []; S.retornos = r.retornos || []; S.espera = r.espera || []; S.estoque = r.estoque || []; S.acoes = r.acoes || {}; S.ts = r.ts;
       S.status = await api('status');
     } else if (Sync.enabled()) {
       const { 'lembretes.json': l, 'acoes.json': ac } = await Sync.ler({ 'lembretes.json': { dias: [] }, 'acoes.json': {} });
-      S.dias = l.dias || []; S.semanas = l.semanas || []; S.noites = l.noites || []; S.retornos = l.retornos || []; S.espera = l.espera || []; S.ts = l.ts || 0;
+      S.dias = l.dias || []; S.semanas = l.semanas || []; S.noites = l.noites || []; S.retornos = l.retornos || []; S.espera = l.espera || []; S.estoque = l.estoque || []; S.ts = l.ts || 0;
       S.acoes = juntarAcoes(ac || {}, lerJSON(K.acoesPendentes, {}));
-      gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, noites: S.noites, retornos: S.retornos, espera: S.espera, acoes: S.acoes, ts: S.ts });
+      gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, noites: S.noites, retornos: S.retornos, espera: S.espera, estoque: S.estoque, acoes: S.acoes, ts: S.ts });
     }
   } catch (err) {
     S.erro = err.message || String(err);
@@ -229,14 +229,14 @@ function blocoRetornos(chavesDoDia) {
     ${futuros.length ? `<p class="sub"><a href="#/retornos">📅 ${futuros.length} retorno(s) combinado(s) para os próximos dias — ver</a></p>` : ''}`;
 }
 // ---------------------------------------------------------------- fila de espera ("quando chegar eu te aviso")
-function cardEspera(e, chegou) {
+function cardEspera(e, chegou, unidade = '') {
   const ch = e.chegou || {};
   const preco = brlV(ch.preco);
   const msg = e.mensagem || `Bom dia, irmão, beleza? Chegou o ${e.produto} que você tava procurando! Ainda tem interesse?`;
   return cartao({
     ...e, prioridade: chegou ? 'alta' : 'media',
     produto: e.produto + (e.detalhes ? ` · ${e.detalhes}` : ''),
-    situacao: chegou ? `🔔 Tem no estoque: ${(ch.opcoes && ch.opcoes.length ? ch.opcoes : [ch]).map((o) => `${o.item}${brlV(o.preco) ? ` (${brlV(o.preco)})` : ''}`).join(' · ')}` : `Esperando ${e.familia} desde ${dataBR(e.desde, false)}${e.pedido ? ` · ${e.pedido}` : ''}`,
+    situacao: [chegou ? `🔔 Tem no estoque: ${(ch.opcoes && ch.opcoes.length ? ch.opcoes : [ch]).map((o) => `${o.item}${brlV(o.preco) ? ` (${brlV(o.preco)})` : ''}`).join(' · ')}` : `Esperando ${e.familia} desde ${dataBR(e.desde, false)}${e.pedido ? ` · ${e.pedido}` : ''}`, unidade].filter(Boolean).join(' · '),
     motivo: chegou ? `Esperando desde ${dataBR(e.desde, false)}${e.pedido ? ` · ${e.pedido}` : ''}` : '',
     mensagem: chegou && preco && !/R\$/.test(msg) && !(ch.opcoes && ch.opcoes.length > 1) ? `${msg} Tá saindo ${preco}.` : msg,
     _listaEm: chegou ? ch.em : undefined,
@@ -252,12 +252,32 @@ function blocoChegou() {
   return `${chegou.length ? `<h2 style="margin:4px 0 8px">🔔 Chegou o que estavam esperando (${chegou.length})</h2>${chegou.map((e) => cardEspera(e, true)).join('')}` : ''}
     ${fila ? `<p class="sub"><a href="#/espera">⏳ ${fila} cliente(s) na fila de espera — ver</a></p>` : ''}`;
 }
+// unidades da Gestão (disponíveis e chegando) do modelo, com foto, custo e para quem cada uma vai
+const ICONE_FAMILIA = (f) => (/PS|PlayStation/i.test(f) ? '🎮' : /Xbox/i.test(f) ? '🟩' : /Switch/i.test(f) ? '🕹️' : /iPhone/i.test(f) ? '📱' : '🎮');
+function unidadeEstoque(u) {
+  const st = u.situacao === 'disponivel' ? '<span class="st-ok">✅ Disponível</span>' : `<span class="st-chegando">🚚 ${esc(u.status)}</span>`;
+  const lucro = u.preco && u.custo ? Number(u.preco) - Number(u.custo) : null;
+  return `<div class="unidade">
+    ${u.foto ? `<img src="${u.foto}" alt="" loading="lazy">` : `<div class="sem-foto">${ICONE_FAMILIA(u.familia)}</div>`}
+    <div class="unidade-txt"><b>${esc(u.nome || u.item)}</b>
+      <div>${st}</div>
+      <div>Custo <b>${brlV(u.custo) || '—'}</b>${u.preco ? ` · Venda ${brlV(u.preco)}` : ''}${lucro != null ? ` · <span class="lucro">+${brlV(lucro)}</span>` : ''}</div>
+      <div class="para">${u.paraNome ? `➡️ Para <b>${esc(u.paraNome)}</b>` : '🆓 Sem cliente da fila'}</div></div></div>`;
+}
 function telaEspera() {
   const lista = esperaAtiva();
   const porFamilia = {};
   lista.forEach((e) => { (porFamilia[e.familia] = porFamilia[e.familia] || []).push(e); });
-  return `<h1>⏳ Fila de espera</h1><p class="sub">Clientes esperando um modelo sem estoque. Quando a Gestão tiver o item em "Aguardando venda", você recebe a notificação e eles aparecem na aba Hoje.</p>
-    ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<h2 style="margin:14px 0 8px">${esc(f)} (${l.length})${l.some((e) => e.chegou) ? ' · 🔔 tem no estoque' : ''}</h2>${l.map((e) => cardEspera(e, Boolean(e.chegou))).join('')}`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
+  const unid = (f) => S.estoque.filter((u) => u.familia === f);
+  const blocoEstoque = (f) => {
+    const us = unid(f);
+    if (!us.length) return '<p class="sub">📦 Nada desse modelo na Gestão (nem disponível, nem chegando).</p>';
+    const disp = us.filter((u) => u.situacao === 'disponivel').length;
+    return `<details class="estoque" open><summary>📦 Estoque na Gestão: ${disp} disponível(is) · ${us.length - disp} chegando</summary>${us.map(unidadeEstoque).join('')}</details>`;
+  };
+  const vaiUsar = (e) => { const u = S.estoque.find((x) => x.para && x.para === e.chave); return u ? `${u.situacao === 'disponivel' ? '✅' : '🚚'} Vai usar: ${u.nome || u.item} (custo ${brlV(u.custo)})` : ''; };
+  return `<h1>⏳ Fila de espera</h1><p class="sub">Clientes esperando um modelo sem estoque. Quando a Gestão tiver o item em "Aguardando venda", você recebe a notificação e eles aparecem na aba Hoje. Cada unidade vai para o primeiro da fila que ela atende.</p>
+    ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<h2 style="margin:14px 0 8px">${esc(f)} (${l.length})${l.some((e) => e.chegou) ? ' · 🔔 tem no estoque' : ''}</h2>${blocoEstoque(f)}${l.map((e) => cardEspera(e, Boolean(e.chegou), vaiUsar(e))).join('')}`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
 }
 
 function telaRetornos() {
@@ -697,7 +717,7 @@ if (location.hash.startsWith('#config=')) {
 }
 if (!NO_PC) {
   const cache = lerJSON(K.cache, null);
-  if (cache?.dias) { S.dias = cache.dias; S.semanas = cache.semanas || []; S.noites = cache.noites || []; S.retornos = cache.retornos || []; S.espera = cache.espera || []; S.acoes = cache.acoes || {}; S.ts = cache.ts; }
+  if (cache?.dias) { S.dias = cache.dias; S.semanas = cache.semanas || []; S.noites = cache.noites || []; S.retornos = cache.retornos || []; S.espera = cache.espera || []; S.estoque = cache.estoque || []; S.acoes = cache.acoes || {}; S.ts = cache.ts; }
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 rotear();
