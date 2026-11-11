@@ -39,6 +39,8 @@ SUGESTÃO DE MENSAGEM (no estilo do João, informal, curta, 1 a 3 frases, sem em
 - SÓ use "Opa, <primeiro nome>! João do <produto> aqui" quando for o PRIMEIRO contato no WhatsApp com alguém que conversou com ele em outro lugar (OLX, Marketplace, Instagram) e passou o número na conversa — aí ele se identifica.
 Use o que mais converte nas vendas dele: oferecer foto/vídeo do aparelho real, simular parcelamento ("dá pra fazer em até 12x"), facilitar entrega/ponto de encontro, aceitar usado na troca, garantia de 3 meses, aparelho higienizado, oferecer separar/reservar. Não invente preços que não apareceram na conversa nem no estoque. Não dê desconto por conta própria.
 
+FILA DE ESPERA: procure clientes que queriam um modelo que o João NÃO tinha em estoque e ficaram esperando ("no momento não tenho", "assim que chegar eu te aviso", "quando tiver me chama", "posto nos stories quando chegar"). Confira no ESTOQUE (consulta da Gestão abaixo): se o modelo JÁ está disponível, não é fila — coloque na lista de hoje. Para cada um, monte um item em "espera": nome, canal, contato, "produto" (o modelo desejado, o mais específico possível: "PS5 Slim Digital", "PS5 com leitor", "Xbox Series S", "PS4 Pro", "iPhone 13"), "detalhes" (orçamento, cor, armazenamento, se aceita usado de entrada, forma de pagamento — o que ajudar a fechar), "pedido" (o que foi dito, curto) e "mensagem" (para mandar QUANDO CHEGAR, no estilo do João: "Bom dia, irmão, beleza? Chegou o PS5 Slim que você tava procurando! Ainda tem interesse?"). Inclua também quem entrou na fila em dias anteriores e voltou a aparecer nas conversas.
+
 RETORNOS COMBINADOS: procure clientes que PEDIRAM para ser chamados numa data futura ou disseram quando vão poder comprar — "me chama mês que vem", "semana que vem eu te falo", "quando eu receber dia 5", "depois do Natal", "no fim do mês", "volto a falar em janeiro". Para cada um, monte um item em "retornos" com: nome, canal, contato, produto, "data" (AAAA-MM-DD em que o João deve chamar: converta a partir da data da mensagem — "mês que vem" = dia 1 do mês seguinte, ou o dia que o cliente citou; "semana que vem" = segunda-feira seguinte; "quando receber dia 5" = dia 5; "depois do Natal" = 26/12; "fim do mês" = dia 28; "janeiro" = 02/01), "pedido" (o que o cliente disse, curto, entre aspas), "motivo" (por que vale chamar) e "mensagem" (sugestão para enviar NAQUELE dia, no estilo do João — ele já conversou com a pessoa: "Bom dia, irmão, beleza? Você pediu pra eu te chamar agora no começo do mês, ainda tá querendo o PS5?").
 Quem tem retorno marcado para uma data futura NÃO entra na lista "itens" de hoje (a não ser que haja algo para fazer hoje também).
 
@@ -58,6 +60,9 @@ SAÍDA: grave com a ferramenta Write o arquivo coletas\{DATA}\resultado.json (na
   "data": "{DATA}",
   "resumo": "2 a 4 frases: quantas conversas de venda houve em cada canal, quantas viraram venda, e o principal ponto de atenção para hoje",
   "fontes": {"WhatsApp": "N conversas lidas", "Facebook": "...", "OLX": "..."} (ou "não coletado"/"erro: ..."),
+  "espera": [
+    {"nome": "...", "canal": "...", "contato": "...", "produto": "PS5 Slim Digital", "detalhes": "...", "pedido": "...", "mensagem": "..."}
+  ],
   "retornos": [
     {"nome": "...", "canal": "...", "contato": "...", "produto": "...", "data": "AAAA-MM-DD", "pedido": "\"me chama mês que vem\"", "motivo": "...", "mensagem": "..."}
   ],

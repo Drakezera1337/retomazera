@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -39,6 +40,8 @@ PASTA_DIAS = os.path.join(BASE_DIR, "lembretes")      # histórico local (fora d
 PASTA_COLETAS = os.path.join(BASE_DIR, "coletas")     # mensagens copiadas pela extensão (fora do git)
 PASTA_SEMANAS = os.path.join(BASE_DIR, "semanas")     # resumos semanais (fora do git)
 PASTA_NOITES = os.path.join(BASE_DIR, "noites")       # análises da noite: preparar as vendas de amanhã (fora do git)
+ESPERA = os.path.join(BASE_DIR, "espera.json")        # fila de espera: cliente aguardando um modelo sem estoque (fora do git)
+GESTAO_DB = "file:D:/Loja/Programa/Gestao/dist/GestaoVendas/gestao_vendas.db?mode=ro"
 RETORNOS = os.path.join(BASE_DIR, "retornos.json")    # "me chama mês que vem": guardado sem prazo (fora do git)
 ACOES = os.path.join(BASE_DIR, "acoes.json")          # Fixar/Já chamei/Vendido/Excluir por cliente (fora do git; cópia no Gist)
 NOMES_FONTES = {"whatsapp": "WhatsApp", "facebook": "Facebook", "olx": "OLX", "instagram": "Instagram"}
@@ -161,6 +164,153 @@ def retornos_publicos():
     return sorted(ler_retornos().values(), key=lambda v: v.get("data", ""))
 
 
+# --------------------------------------------------------------------------- fila de espera
+FAMILIAS = [  # (família, regex) — a ordem importa: o mais específico primeiro
+    ("PS5", r"\bps ?5\b|playstation ?5"), ("PS4 Pro", r"\bps ?4 ?pro\b"), ("PS4", r"\bps ?4\b|playstation ?4"),
+    ("PS3", r"\bps ?3\b|playstation ?3"), ("PS2", r"\bps ?2\b|playstation ?2"),
+    ("Xbox Series X", r"series ?x\b"), ("Xbox Series S", r"series ?s\b"), ("Xbox One", r"xbox ?one"), ("Xbox 360", r"xbox ?360"),
+    ("Nintendo Switch", r"switch"), ("PS Vita", r"vita"), ("PSP", r"\bpsp\b"),
+]
+
+
+def familia(texto):
+    t = unicodedata_sem_acento(str(texto or "")).lower().replace("séries", "series")
+    m = re.search(r"iphone ?(\d{1,2})( ?pro ?max| ?pro| ?plus| ?mini)?", t)
+    if m:
+        return ("iPhone " + m.group(1) + (m.group(2) or "").title()).replace("  ", " ").strip()
+    for nome, rx in FAMILIAS:
+        if re.search(rx, t):
+            return nome
+    return ""
+
+
+def unicodedata_sem_acento(s):
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFD", s) if not unicodedata.combining(ch))
+
+
+def ler_espera():
+    try:
+        with open(ESPERA, encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def gravar_espera(reg):
+    with _lock:
+        tmp = ESPERA + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(reg, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, ESPERA)
+
+
+def registrar_espera(lista, origem_data):
+    """Cliente esperando um modelo: chave = cliente + família. Fica até 120 dias (ou até vender/excluir)."""
+    reg = ler_espera()
+    for x in lista or []:
+        if not isinstance(x, dict):
+            continue
+        fam = familia(x.get("produto"))
+        if not fam:
+            continue
+        k = chave_cliente(x) + "|" + fam
+        antigo = reg.get(k, {})
+        reg[k] = {**antigo, "nome": str(x.get("nome") or "")[:80], "canal": str(x.get("canal") or "")[:20],
+                  "contato": str(x.get("contato") or "")[:200], "produto": str(x.get("produto") or "")[:80], "familia": fam,
+                  "detalhes": str(x.get("detalhes") or "")[:300], "pedido": str(x.get("pedido") or "")[:300],
+                  "mensagem": str(x.get("mensagem") or "")[:600],
+                  "desde": antigo.get("desde") or origem_data, "ts": int(time.time() * 1000)}
+    limite = (date.today() - timedelta(days=120)).isoformat()
+    reg = {k: v for k, v in reg.items() if (v.get("desde") or "") >= limite}
+    gravar_espera(reg)
+    verificar_espera()
+    return reg
+
+
+def estoque_disponivel():
+    """Itens 'Aguardando venda' na Gestão (só leitura), com a família de cada um."""
+    try:
+        c = sqlite3.connect(GESTAO_DB, uri=True, timeout=10)
+        linhas = c.execute("select uid, coalesce(nullif(console_nome,''),nome), nome, preco_previsto, data_compra from produtos "
+                           "where (data_venda is null or data_venda='') and status_item='Aguardando venda'").fetchall()
+        c.close()
+    except sqlite3.Error as exc:
+        print(f"[espera] não consegui ler a Gestão: {exc}")
+        return []
+    saida = []
+    # acessórios não contam como "chegou o videogame"; aparelho com preço muito abaixo do normal é defeito/peça
+    acessorio = re.compile(r"\b(controle|jogo|cabo|fonte|capa|case|headset|fone|carregador|skin|suporte|base|pe[cç]a|placa|sucata|defeito|feira do rolo)\b", re.I)
+    minimo = {"PS5": 2500, "Xbox Series X": 2500, "Xbox Series S": 1500, "PS4 Pro": 1200, "PS4": 800, "Xbox One": 700,
+              "Nintendo Switch": 1000, "PS3": 300}
+    for uid, console, nome, prev, dc in linhas:
+        texto = f"{console} {nome}"
+        fam = familia(texto)
+        if not fam or acessorio.search(texto):
+            continue
+        if prev and fam in minimo and float(prev) < minimo[fam]:
+            continue
+        if fam:
+            saida.append({"uid": uid, "item": (console or nome or "")[:120], "familia": fam, "preco": prev, "compra": dc})
+    return saida
+
+
+def verificar_espera(notificar=True):
+    """Cruza a fila com o estoque; cliente com o modelo disponível ganha 'chegou' e vira notificação (1x por item)."""
+    reg = ler_espera()
+    if not reg:
+        return []
+    estoque = estoque_disponivel()
+    acoes = ler_acoes()
+    novos = []
+    for k, e in reg.items():
+        cliente = acoes.get(k.split("|")[0], {})
+        if cliente.get("excluido"):
+            continue
+        disp = [i for i in estoque if i["familia"] == e.get("familia")]
+        if not disp:
+            if e.get("chegou"):
+                e["chegou"] = None  # o item foi vendido para outra pessoa: volta a esperar
+            continue
+        avisados = set(e.get("avisados") or [])
+        novo = next((i for i in disp if i["uid"] not in avisados), None)
+        opcoes = [{"item": i["item"], "preco": i["preco"]} for i in disp]
+        if e.get("chegou"):
+            e["chegou"]["opcoes"] = opcoes  # todas as unidades do modelo em estoque (o João escolhe a que combina)
+        if not e.get("chegou") or novo:
+            item = novo or disp[0]
+            e["chegou"] = {"uid": item["uid"], "item": item["item"], "preco": item["preco"], "em": int(time.time() * 1000),
+                           "opcoes": opcoes}
+            if novo:
+                e["avisados"] = sorted(avisados | {novo["uid"]})
+                novos.append(e)
+    gravar_espera(reg)
+    if novos and notificar:
+        por_familia = {}
+        for e in novos:
+            por_familia.setdefault(e["familia"], []).append(e)
+        for fam, lista in por_familia.items():
+            nomes = ", ".join(x.get("nome") or "?" for x in lista[:4]) + (f" e mais {len(lista) - 4}" if len(lista) > 4 else "")
+            enviar_push({"title": f"🔔 Chegou {fam}! {len(lista)} cliente{'s' if len(lista) > 1 else ''} esperando",
+                         "body": f"{nomes} — {lista[0]['chegou']['item']}", "tag": "retomazera-espera-" + fam, "data": "espera"})
+        try:
+            publicar_gist()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[gist] publicar: {exc}")
+        print(f"[espera] chegou: {', '.join(e['familia'] + ' → ' + (e.get('nome') or '?') for e in novos)}")
+    return novos
+
+
+def laco_espera():
+    while True:
+        try:
+            verificar_espera()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[espera] {exc}")
+        time.sleep(600)
+
+
 # --------------------------------------------------------------------------- ações dos cards
 def ler_acoes():
     try:
@@ -245,6 +395,7 @@ def publicar_gist():
     if not gist_cfg():
         return False
     corpo = {"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "retornos": retornos_publicos(),
+             "espera": sorted(ler_espera().values(), key=lambda v: v.get("desde") or ""),
              "ts": int(time.time() * 1000)}
     gist_request("PATCH", {"files": {"lembretes.json": {"content": json.dumps(corpo, ensure_ascii=False)}}})
     return True
@@ -361,6 +512,10 @@ def salvar_dia(corpo):
         })
     agendadas = limpar_agendadas(corpo.get("agendadas") or [])
     registrar_retornos(corpo.get("retornos") or [], data)
+    try:
+        registrar_espera(corpo.get("espera") or [], data)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[espera] {exc}")
     dia = {"data": data, "geradoEm": int(time.time() * 1000), "resumo": str(corpo.get("resumo") or "")[:1500],
            "fontes": corpo.get("fontes") if isinstance(corpo.get("fontes"), dict) else {}, "itens": limpos,
            "agendadas": agendadas}
@@ -777,6 +932,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/lembretes":
             return self._json({"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "acoes": ler_acoes(),
                                "retornos": retornos_publicos(),
+                               "espera": sorted(ler_espera().values(), key=lambda v: v.get("desde") or ""),
                                "ts": int(time.time() * 1000)})
         if path == "/api/coletas":
             data = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("data", [""])[0]
@@ -851,6 +1007,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json({"ok": False, "erro": "sem coleta da noite nesse dia"}, 400)
             threading.Thread(target=analisar_noite, args=(data, corpo.get("notificar", True), True), daemon=True).start()
             return self._json({"ok": True, "iniciada": data})
+        if path == "/api/espera":
+            # adicionar à fila manualmente pelo app: {nome, canal, contato, produto, detalhes}
+            if corpo.get("produto") and familia(corpo.get("produto")):
+                registrar_espera([corpo], time.strftime("%Y-%m-%d"))
+                return self._json({"ok": True})
+            return self._json({"ok": False, "erro": "modelo não reconhecido"}, 400)
         if path == "/api/semanal":
             threading.Thread(target=analisar_semana, args=(corpo.get("notificar", True), True), daemon=True).start()
             return self._json({"ok": True, "semana": semana_anterior()[2]})
@@ -931,6 +1093,7 @@ def main():
         print(f"O Retomazera já está rodando (porta {PORT} ocupada).")
         return
     threading.Thread(target=laco_gist, daemon=True).start()
+    threading.Thread(target=laco_espera, daemon=True).start()
     cfg = gist_cfg()
     print("=" * 60)
     print(" RETOMAZERA rodando!")

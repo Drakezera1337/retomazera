@@ -1,5 +1,5 @@
 // Retomazera: cache para abrir rápido/offline e notificação diária (enviada pelo server.py do PC).
-const CACHE = 'retomazera-v12';
+const CACHE = 'retomazera-v13';
 const ASSETS = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'sync.js',
   'icon-192.png', 'badge-96.png', 'manifest.webmanifest'];
 
@@ -55,7 +55,7 @@ self.addEventListener('notificationclick', (e) => {
   e.notification.close();
   const escopo = self.registration.scope;
   const dia = e.notification.data?.dia;
-  const destino = !dia || dia === 'noite' ? `${escopo}#/` : dia.startsWith('semana/') ? `${escopo}#/${dia}` : `${escopo}#/dia/${dia}`;
+  const destino = dia === 'espera' ? `${escopo}#/espera` : !dia || dia === 'noite' ? `${escopo}#/` : dia.startsWith('semana/') ? `${escopo}#/${dia}` : `${escopo}#/dia/${dia}`;
   e.waitUntil((async () => {
     const abertos = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const app = abertos.find((c) => c.url.startsWith(escopo));

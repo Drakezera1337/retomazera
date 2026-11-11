@@ -7,7 +7,7 @@ const K = { cache: 'retomazera:cache', push: 'retomazera:push', acoesPendentes: 
 const lerJSON = (k, p) => { try { return JSON.parse(localStorage.getItem(k)) ?? p; } catch { return p; } };
 const gravarJSON = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem storage */ } };
 
-const S = { dias: [], semanas: [], noites: [], retornos: [], acoes: {}, cards: {}, mostrarExcluidos: false, ts: 0, status: null, carregando: false, erro: '' };
+const S = { dias: [], semanas: [], noites: [], retornos: [], espera: [], acoes: {}, cards: {}, mostrarExcluidos: false, ts: 0, status: null, carregando: false, erro: '' };
 
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.hidden = false;
@@ -39,13 +39,13 @@ async function carregar() {
   try {
     if (NO_PC) {
       const r = await api('lembretes');
-      S.dias = r.dias || []; S.semanas = r.semanas || []; S.noites = r.noites || []; S.retornos = r.retornos || []; S.acoes = r.acoes || {}; S.ts = r.ts;
+      S.dias = r.dias || []; S.semanas = r.semanas || []; S.noites = r.noites || []; S.retornos = r.retornos || []; S.espera = r.espera || []; S.acoes = r.acoes || {}; S.ts = r.ts;
       S.status = await api('status');
     } else if (Sync.enabled()) {
       const { 'lembretes.json': l, 'acoes.json': ac } = await Sync.ler({ 'lembretes.json': { dias: [] }, 'acoes.json': {} });
-      S.dias = l.dias || []; S.semanas = l.semanas || []; S.noites = l.noites || []; S.retornos = l.retornos || []; S.ts = l.ts || 0;
+      S.dias = l.dias || []; S.semanas = l.semanas || []; S.noites = l.noites || []; S.retornos = l.retornos || []; S.espera = l.espera || []; S.ts = l.ts || 0;
       S.acoes = juntarAcoes(ac || {}, lerJSON(K.acoesPendentes, {}));
-      gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, noites: S.noites, retornos: S.retornos, acoes: S.acoes, ts: S.ts });
+      gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, noites: S.noites, retornos: S.retornos, espera: S.espera, acoes: S.acoes, ts: S.ts });
     }
   } catch (err) {
     S.erro = err.message || String(err);
@@ -228,6 +228,38 @@ function blocoRetornos(chavesDoDia) {
   return `${devidos.length ? `<h2 style="margin:4px 0 8px">📅 Combinado de chamar hoje (${devidos.length})</h2>${devidos.map(cartao).join('')}` : ''}
     ${futuros.length ? `<p class="sub"><a href="#/retornos">📅 ${futuros.length} retorno(s) combinado(s) para os próximos dias — ver</a></p>` : ''}`;
 }
+// ---------------------------------------------------------------- fila de espera ("quando chegar eu te aviso")
+function cardEspera(e, chegou) {
+  const ch = e.chegou || {};
+  const preco = brlV(ch.preco);
+  const msg = e.mensagem || `Bom dia, irmão, beleza? Chegou o ${e.produto} que você tava procurando! Ainda tem interesse?`;
+  return cartao({
+    ...e, prioridade: chegou ? 'alta' : 'media',
+    produto: e.produto + (e.detalhes ? ` · ${e.detalhes}` : ''),
+    situacao: chegou ? `🔔 Tem no estoque: ${(ch.opcoes && ch.opcoes.length ? ch.opcoes : [ch]).map((o) => `${o.item}${brlV(o.preco) ? ` (${brlV(o.preco)})` : ''}`).join(' · ')}` : `Esperando ${e.familia} desde ${dataBR(e.desde, false)}${e.pedido ? ` · ${e.pedido}` : ''}`,
+    motivo: chegou ? `Esperando desde ${dataBR(e.desde, false)}${e.pedido ? ` · ${e.pedido}` : ''}` : '',
+    mensagem: chegou && preco && !/R\$/.test(msg) && !(ch.opcoes && ch.opcoes.length > 1) ? `${msg} Tá saindo ${preco}.` : msg,
+    _listaEm: chegou ? ch.em : undefined,
+  });
+}
+function esperaAtiva() {
+  return S.espera.filter((e) => { const a = acaoDe({ ...e, _listaEm: e.chegou?.em }); return !a.excluido && !a.vendido; });
+}
+function blocoChegou() {
+  const chegou = esperaAtiva().filter((e) => e.chegou && !acaoDe({ ...e, _listaEm: e.chegou.em }).chamado);
+  const fila = esperaAtiva().length;
+  if (!chegou.length && !fila) return '';
+  return `${chegou.length ? `<h2 style="margin:4px 0 8px">🔔 Chegou o que estavam esperando (${chegou.length})</h2>${chegou.map((e) => cardEspera(e, true)).join('')}` : ''}
+    ${fila ? `<p class="sub"><a href="#/espera">⏳ ${fila} cliente(s) na fila de espera — ver</a></p>` : ''}`;
+}
+function telaEspera() {
+  const lista = esperaAtiva();
+  const porFamilia = {};
+  lista.forEach((e) => { (porFamilia[e.familia] = porFamilia[e.familia] || []).push(e); });
+  return `<h1>⏳ Fila de espera</h1><p class="sub">Clientes esperando um modelo sem estoque. Quando a Gestão tiver o item em "Aguardando venda", você recebe a notificação e eles aparecem na aba Hoje.</p>
+    ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<h2 style="margin:14px 0 8px">${esc(f)} (${l.length})${l.some((e) => e.chegou) ? ' · 🔔 tem no estoque' : ''}</h2>${l.map((e) => cardEspera(e, Boolean(e.chegou))).join('')}`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
+}
+
 function telaRetornos() {
   const futuros = S.retornos.filter((r) => r.data >= hojeIso() && !acaoDe(r).excluido);
   return `<h1>📅 Retornos combinados</h1><p class="sub">Clientes que pediram para ser chamados numa data. No dia, aparecem na aba Hoje.</p>
@@ -317,7 +349,7 @@ function cartao(x) {
 
 function telaDia(dia, titulo) {
   if (!dia && titulo === 'Chamar hoje' && (S.noites.length || vendasMarcadas().length)) {
-    return `<h1>Chamar hoje</h1>${blocoNoite()}${blocoVendas()}${blocoRetornos(new Set())}<div class="vazio">A lista de quem chamar chega uns minutos depois que o PC é ligado.</div>`;
+    return `<h1>Chamar hoje</h1>${blocoNoite()}${blocoChegou()}${blocoVendas()}${blocoRetornos(new Set())}<div class="vazio">A lista de quem chamar chega uns minutos depois que o PC é ligado.</div>`;
   }
   if (!dia) {
     const conectar = !NO_PC && !Sync.enabled();
@@ -349,7 +381,7 @@ function telaDia(dia, titulo) {
       <span class="chip">${itens.length} para chamar · ${pendentes} pendente(s)</span>
       ${Object.entries(porCanal).map(([c, n]) => { const [cls, nm] = CANAIS[c] || ['', c]; return `<span class="chip ${cls}">${esc(nm)} ${n}</span>`; }).join('')}
     </div>
-    ${titulo === 'Chamar hoje' ? blocoNoite() + blocoVendas() + blocoRetornos(chavesDoDia) : ''}
+    ${titulo === 'Chamar hoje' ? blocoNoite() + blocoChegou() + blocoVendas() + blocoRetornos(chavesDoDia) : ''}
     ${fixadosAntigos.length ? `<h2 style="margin:4px 0 8px">📌 Fixados</h2>${fixadosAntigos.map(cartao).join('')}<h2 style="margin:14px 0 8px">Lista do dia</h2>` : ''}
     ${itens.length ? itens.map(cartao).join('') : '<div class="vazio">Ninguém para retomar a partir desse dia. 👍</div>'}
     ${excluidos.length ? `<p class="sub"><a href="#" data-mostrar-excluidos="1">🗑️ ${excluidos.length} excluído(s) — ${S.mostrarExcluidos ? 'esconder' : 'mostrar'}</a></p>${S.mostrarExcluidos ? excluidos.map(cartao).join('') : ''}` : ''}
@@ -622,6 +654,7 @@ function rotear() {
   } else if (h.startsWith('#/semana')) { html = telaSemana(h.split('/')[2]); aba = 'semana'; }
   else if (h.startsWith('#/historico')) { html = telaHistorico(); aba = 'historico'; }
   else if (h.startsWith('#/retornos')) { html = telaRetornos(); aba = 'hoje'; }
+  else if (h.startsWith('#/espera')) { html = telaEspera(); aba = 'hoje'; }
   else if (h.startsWith('#/ajustes')) { html = telaAjustes(); aba = 'ajustes'; }
   else html = telaDia(S.dias[0], 'Chamar hoje');
   $('#view').innerHTML = html;
@@ -664,7 +697,7 @@ if (location.hash.startsWith('#config=')) {
 }
 if (!NO_PC) {
   const cache = lerJSON(K.cache, null);
-  if (cache?.dias) { S.dias = cache.dias; S.semanas = cache.semanas || []; S.noites = cache.noites || []; S.retornos = cache.retornos || []; S.acoes = cache.acoes || {}; S.ts = cache.ts; }
+  if (cache?.dias) { S.dias = cache.dias; S.semanas = cache.semanas || []; S.noites = cache.noites || []; S.retornos = cache.retornos || []; S.espera = cache.espera || []; S.acoes = cache.acoes || {}; S.ts = cache.ts; }
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 rotear();
