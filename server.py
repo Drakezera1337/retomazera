@@ -660,6 +660,9 @@ def chamar_claude(prompt, arquivo_log):
     os.makedirs(os.path.dirname(arquivo_log), exist_ok=True)
     with open(arquivo_log, "w", encoding="utf-8") as f:
         f.write(f"código {r.returncode} em {time.time() - inicio:.0f} s\n\n--- saída ---\n{r.stdout}\n--- erros ---\n{r.stderr}")
+    # login do Claude Code expirado: não adianta tentar de novo, o João precisa entrar de novo
+    if r.returncode and re.search(r"authenticat|oauth|session expired|not logged|please run /login", (r.stdout or "") + (r.stderr or ""), re.I):
+        raise RuntimeError("o login do Claude no PC expirou: abra o terminal, rode 'claude' e digite /login")
     return r
 
 
