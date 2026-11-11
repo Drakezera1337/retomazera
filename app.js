@@ -419,7 +419,34 @@ function blocoVendas(naAba) {
     ${doDia.length ? `${total ? `<p class="sub">A receber hoje: <b>${esc(brlV(total))}</b></p>` : ''}${doDia.map(cartaoVenda).join('')}` : '<p class="sub">Nenhuma venda marcada para hoje.</p>'}
     ${atrasadas.length ? `<h2 style="margin:14px 0 8px">⚠️ Ficaram pendentes</h2>${atrasadas.map(cartaoVenda).join('')}` : ''}
     ${proximas.length ? `<h2 style="margin:14px 0 8px">🗓️ Próximas</h2>${proximas.map(cartaoVenda).join('')}` : ''}
-    ${naAba ? '' : '<h2 style="margin:18px 0 8px">📲 Para chamar</h2>'}`;
+    ${naAba ? painelResultado([['Hoje', doDia], ['Pendentes', atrasadas], ['Próximas', proximas]]) : '<h2 style="margin:18px 0 8px">📲 Para chamar</h2>'}`;
+}
+// faturamento = total combinado; lucro = faturamento − custo (Gestão) dos videogames que vão em cada venda.
+// Item sem custo conhecido (jogo, acessório, taxa) entra inteiro no lucro — o painel avisa quantos são.
+function resultadoVendas(lista) {
+  const aloc = alocarVendas();
+  let fat = 0, custo = 0, semCusto = 0;
+  for (const v of lista) {
+    const itens = (v.itens || []).map((it, i) => ({ it, u: aloc.porItem[`${v._chave}#${i}`] }));
+    fat += Number(v.total) || itens.reduce((s, x) => s + (Number(x.it.valor) || 0), 0);
+    for (const { it, u } of itens) {
+      if (u) custo += Number(u.custo) || 0;
+      else if (!/^\W*(taxa|frete|entrega)/i.test(it.descricao || '')) semCusto += 1;
+    }
+  }
+  return { fat, custo, lucro: fat - custo, semCusto };
+}
+function painelResultado(grupos) {
+  const linhas = grupos.filter(([, l]) => l.length).map(([nome, l]) => [nome, resultadoVendas(l), l.length]);
+  if (!linhas.length) return '';
+  const tudo = resultadoVendas(grupos.flatMap(([, l]) => l));
+  const semCusto = tudo.semCusto;
+  return `<div class="painel resultado">
+    <h2 style="margin:0 0 8px">📊 Faturamento e lucro</h2>
+    ${linhas.map(([nome, r, n]) => `<div class="res-linha"><span>${esc(nome)} <span class="sub">(${n})</span></span><span>${esc(brlV(r.fat))} · <b class="lucro">${esc(brlV(r.lucro))}</b></span></div>`).join('')}
+    ${linhas.length > 1 ? `<div class="res-linha res-total"><span>Total</span><span>${esc(brlV(tudo.fat))} · <b class="lucro">${esc(brlV(tudo.lucro))}</b></span></div>` : ''}
+    <p class="sub" style="margin:8px 0 0">Faturamento · <b>lucro</b> (faturamento − custo dos videogames na Gestão: ${esc(brlV(tudo.custo))}).${semCusto ? ` ${semCusto} item(ns) sem custo na Gestão (jogo/acessório) entram inteiros no lucro.` : ''}</p>
+  </div>`;
 }
 
 // ---------------------------------------------------------------- telas

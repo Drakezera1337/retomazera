@@ -91,3 +91,5 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 .st-ok { color: var(--verde); font-weight: 600; } .st-chegando { color: var(--media); font-weight: 600; }
 .lucro { color: var(--verde); }
 .unidade select.vincular { margin-top: 6px; padding: 6px 8px; font-size: 13px; width: auto; max-width: 100%; }
+.resultado .res-linha { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--borda); }
+.resultado .res-total { font-weight: 700; border-bottom: 0; }
