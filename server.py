@@ -305,6 +305,31 @@ def miniatura(caminho):
     return _miniaturas[chave]
 
 
+def itens_de_vendas(acoes):
+    """Videogames das vendas marcadas (a lista mais nova de cada cliente vale), de 3 dias atrás em diante:
+    [(chave do item 'venda:<cliente>:<data>#<i>', família, descrição)]. Acessório/taxa não entra."""
+    por_cliente = {}
+    for dia in sorted(dias_locais() + noites_locais(), key=lambda d: d.get("geradoEm") or 0):
+        for v in dia.get("agendadas") or []:
+            if isinstance(v, dict):
+                por_cliente[chave_cliente(v)] = v
+    limite = (date.today() - timedelta(days=3)).isoformat()
+    nao_console = re.compile(r"^\W*(\d+\s*x?\s*)?(controle|jogo|cabo|fonte|capa|case|headset|fone|carregador|skin|suporte|base|taxa|frete|entrega|garantia)", re.I)
+    saida = []
+    for ck, v in por_cliente.items():
+        if (v.get("data") or "") < limite:
+            continue
+        vk = f"venda:{ck}:{v.get('data')}"
+        if acoes.get(vk, {}).get("cancelada"):
+            continue
+        for i, it in enumerate(v.get("itens") or []):
+            desc = str((it or {}).get("descricao") or "")
+            fam = familia(desc)
+            if fam and not nao_console.search(desc):
+                saida.append((f"{vk}#{i}", fam, desc))
+    return saida
+
+
 def estoque_fila(reg=None):
     """Unidades na Gestão (disponíveis e a caminho) dos modelos que alguém da fila espera, com foto, custo e
     para qual cliente cada uma vai: o primeiro da fila fica com a primeira unidade que atende (disponível antes
@@ -314,6 +339,9 @@ def estoque_fila(reg=None):
     fila = [(k, e) for k, e in reg.items()
             if not acoes.get(k.split("|")[0], {}).get("excluido") and not acoes.get(k.split("|")[0], {}).get("vendido")]
     familias = {e.get("familia") for _, e in fila}
+    # videogames das vendas marcadas também entram (a aba Vendas mostra qual unidade vai ser entregue)
+    itens_venda = itens_de_vendas(acoes)
+    familias |= {fam for _, fam, _ in itens_venda}
     if not familias:
         return []
     try:
@@ -346,8 +374,8 @@ def estoque_fila(reg=None):
                          "custo": round(float(compra or 0) + float(reparo_v or 0), 2), "preco": prev, "compra": dc,
                          "foto": miniatura(lista_fotos[0]) if lista_fotos else "", "para": "", "paraNome": ""})
     unidades.sort(key=lambda u: (u["familia"], u["situacao"] != "disponivel", u["compra"] or ""))
-    for u in unidades:  # quem da fila essa unidade atende (o app refaz a divisão na hora, ao desvincular)
-        u["atende"] = [k for k, e in fila if e.get("familia") == u["familia"] and atende(e, u)]
+    for u in unidades:  # quem (fila e itens de venda) essa unidade atende — o app faz a divisão na hora
+        u["atende"] = [k for k, e in fila if e.get("familia") == u["familia"] and atende(e, u)] +                       [k for k, fam, desc in itens_venda if fam == u["familia"] and atende({"produto": desc}, u)]
     usadas = set()
     for k, e in sorted(fila, key=lambda x: x[1].get("desde") or ""):
         fora = set(acoes.get(k.split("|")[0], {}).get("semUnidade") or [])  # unidades que o João desvinculou dele

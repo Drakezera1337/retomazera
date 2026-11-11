@@ -150,6 +150,29 @@ function textoVenda(v) {
     brlV(v.total) ? `Total: ${brlV(v.total)}` : '', v.pagamento ? `Pagamento: ${v.pagamento}` : '',
     v.entrada ? `Entrada: ${v.entrada}` : '', v.observacoes ? `Obs.: ${v.observacoes}` : ''].filter(Boolean).join('\n');
 }
+function blocoUnidadesVenda(v) {
+  if (!S.estoque.length) return '';
+  const aloc = alocarVendas();
+  return (v.itens || []).map((it, i) => ({ it, chave: `${v._chave}#${i}` })).map(({ it, chave }) => {
+    const fam = S.estoque.find((u) => (u.atende || []).includes(chave))?.familia;
+    if (!fam) return '';
+    const u = aloc.porItem[chave];
+    const outras = S.estoque.filter((x) => x.familia === fam && x !== u && (!aloc.porUid[x.uid] || aloc.porUid[x.uid].chave === chave));
+    const troca = outras.length ? `<select class="vincular" data-trocar-item="${esc(chave)}"><option value="">🔄 Trocar o videogame…</option>${outras.map((x) => `<option value="${esc(x.uid)}">${esc(x.nome || x.item)} — custo ${esc(brlV(x.custo))}${x.situacao === 'disponivel' ? '' : ' (chegando)'}</option>`).join('')}</select>` : '';
+    if (!u) return `<div class="unidade"><div class="sem-foto">❓</div><div class="unidade-txt"><b>Não achei ${esc(fam)} livre no estoque da Gestão</b>${troca}</div></div>`;
+    const lucro = Number(it.valor) && u.custo ? Number(it.valor) - Number(u.custo) : null;
+    return `<div class="unidade">
+      ${u.foto ? `<img src="${u.foto}" alt="" loading="lazy">` : `<div class="sem-foto">${ICONE_FAMILIA(u.familia)}</div>`}
+      <div class="unidade-txt"><span class="sub">🎮 Vai este:</span> <b>${esc(u.nome || u.item)}</b>
+        <div>${u.situacao === 'disponivel' ? '<span class="st-ok">✅ Disponível</span>' : '<span class="st-chegando">🚚 Chegando — ainda não está com você!</span>'}${S.acoes[chave]?.uid === u.uid ? ' 📌' : ''}</div>
+        <div>Custo <b>${brlV(u.custo) || '—'}</b>${brlV(it.valor) ? ` · Vendido por ${brlV(it.valor)}` : ''}${lucro != null ? ` · <span class="lucro">${lucro >= 0 ? '+' : ''}${brlV(lucro)}</span>` : ''}</div>
+        ${troca}</div></div>`;
+  }).join('');
+}
+function trocarUnidadeVenda(chaveItem, uid) {
+  salvarAcoes({ [chaveItem]: { uid, ts: Date.now() } });
+  toast('Videogame da venda trocado');
+}
 function cartaoVenda(v) {
   const [cls, nomeCanal] = CANAIS[(v.canal || '').toLowerCase()] || ['', v.canal || '—'];
   const st = S.acoes[v._chave] || {};
@@ -165,6 +188,7 @@ function cartaoVenda(v) {
     </div>
     <p><b>${atrasada ? `⚠️ Era ${esc(dataBR(v.data, false))}` : v.data === hojeIso() ? 'Hoje' : esc(dataBR(v.data))}${v.hora ? ` · 🕒 ${esc(v.hora)}` : ''}</b>${v.local ? ` · 📍 ${esc(v.local)}` : ''}${v.entrega ? ` <span class="sub">(${esc(v.entrega)})</span>` : ''}</p>
     ${(v.itens || []).length ? `<ul class="venda-itens">${v.itens.map((i) => `<li>${esc(i.descricao)}${brlV(i.valor) ? ` <span class="sub">— ${esc(brlV(i.valor))}</span>` : ''}</li>`).join('')}</ul>` : ''}
+    ${blocoUnidadesVenda(v)}
     ${brlV(v.total) ? `<p class="venda-total">Total: <b>${esc(brlV(v.total))}</b></p>` : ''}
     ${v.pagamento ? `<p>💳 ${esc(v.pagamento)}</p>` : ''}
     ${v.entrada ? `<p>🔁 Entrada: ${esc(v.entrada)}</p>` : ''}
@@ -255,10 +279,36 @@ function blocoChegou() {
 // unidades da Gestão (disponíveis e chegando) do modelo, com foto, custo e para quem cada uma vai.
 // A divisão é refeita aqui (e não só no PC) para o "Desvincular" valer na hora: o primeiro da fila pega a
 // primeira unidade que o atende, pulando as que o João desvinculou dele (acoes[cliente].semUnidade).
+// Vendas marcadas reservam primeiro a unidade (cada videogame da venda): a que o João escolheu à mão
+// (acoes[item].uid), senão a de preço igual ao combinado, disponível antes de chegando, comprada há mais tempo.
+function itensConsoleVenda(v) {
+  return (v.itens || []).map((it, i) => ({ it, chave: `${v._chave}#${i}` }))
+    .filter(({ chave }) => S.estoque.some((u) => (u.atende || []).includes(chave)));
+}
+function alocarVendas() {
+  const porUid = {}, porItem = {};
+  const vendas = vendasMarcadas().filter((v) => !(S.acoes[v._chave] || {}).cancelada);
+  const itens = vendas.flatMap((v) => itensConsoleVenda(v).map((x) => ({ ...x, v })));
+  for (const x of itens) {  // escolhas manuais primeiro
+    const uid = S.acoes[x.chave]?.uid;
+    const u = uid && S.estoque.find((y) => y.uid === uid);
+    if (u && !porUid[u.uid]) { porUid[u.uid] = x; porItem[x.chave] = u; }
+  }
+  for (const x of itens) {
+    if (porItem[x.chave]) continue;
+    const cand = S.estoque.filter((u) => !porUid[u.uid] && (u.atende || []).includes(x.chave));
+    const valor = Number(x.it.valor) || 0;
+    cand.sort((a, b) => (Number(a.preco) === valor ? 0 : 1) - (Number(b.preco) === valor ? 0 : 1)
+      || (a.situacao === 'disponivel' ? 0 : 1) - (b.situacao === 'disponivel' ? 0 : 1));
+    if (cand[0]) { porUid[cand[0].uid] = x; porItem[x.chave] = cand[0]; }
+  }
+  return { porUid, porItem };
+}
 function alocarFila() {
+  const reservadas = alocarVendas().porUid;
   const porUid = {}, porChave = {};
   const fila = esperaAtiva().slice().sort((a, b) => (a.desde || '').localeCompare(b.desde || ''));
-  const serve = (x, e) => (x.atende ? x.atende.includes(e.chave) : x.para === e.chave);
+  const serve = (x, e) => !reservadas[x.uid] && (x.atende ? x.atende.includes(e.chave) : x.para === e.chave);
   const fora = (e) => S.acoes[chaveCliente(e)]?.semUnidade || [];
   const dar = (e, u) => { porUid[u.uid] = e; porChave[e.chave] = u; };
   const tirar = (u) => { const e = porUid[u.uid]; if (e) delete porChave[e.chave]; delete porUid[u.uid]; };
@@ -268,7 +318,7 @@ function alocarFila() {
   for (const e of fila) { const u = S.estoque.find((x) => !porUid[x.uid] && serve(x, e)); if (u) dar(e, u); }
   const largadas = new Set();
   const manuais = fila.map((e) => ({ e, v: S.acoes[chaveCliente(e)]?.vinculos?.[e.familia] }))
-    .filter((m) => m.v && S.estoque.some((x) => x.uid === m.v.uid)).sort((a, b) => (a.v.em || 0) - (b.v.em || 0));
+    .filter((m) => m.v && !reservadas[m.v.uid] && S.estoque.some((x) => x.uid === m.v.uid)).sort((a, b) => (a.v.em || 0) - (b.v.em || 0));
   const fixos = new Set();
   for (const { e, v } of manuais) {
     const u = S.estoque.find((x) => x.uid === v.uid);
@@ -284,7 +334,7 @@ function alocarFila() {
       || S.estoque.find((x) => !porUid[x.uid] && !fora(e).includes(x.uid) && serve(x, e));
     if (u) dar(e, u);
   }
-  return { porUid, porChave, fixos };
+  return { porUid, porChave, fixos, reservadas };
 }
 // modo: 'desvincular' | 'desfazer' (tira o desvínculo) | 'manual' (liga esta unidade a este cliente)
 function vincular(chaveEspera, uid, modo) {
@@ -319,8 +369,8 @@ function unidadeEstoque(u, aloc) {
     <div class="unidade-txt"><b>${esc(u.nome || u.item)}</b>
       <div>${st}</div>
       <div>Custo <b>${brlV(u.custo) || '—'}</b>${u.preco ? ` · Venda ${brlV(u.preco)}` : ''}${lucro != null ? ` · <span class="lucro">+${brlV(lucro)}</span>` : ''}</div>
-      <div class="para">${dono ? `➡️ Para <b>${esc(dono.nome)}</b>${aloc.fixos.has(u.uid) ? ' 📌' : ''} <button class="btn btn-mini" data-desvincular="${esc(dono.chave)}" data-uid="${esc(u.uid)}">✖ Desvincular</button>` : '🆓 Sem cliente da fila'}</div>
-      <select class="vincular" data-vincular-uid="${esc(u.uid)}"><option value="">🔗 Vincular a outro cliente…</option>${esperaAtiva().filter((e) => e.familia === u.familia && e !== dono).map((e) => `<option value="${esc(e.chave)}">${esc(e.nome)}${aloc.porChave[e.chave] ? ' (troca a unidade dele)' : ''}</option>`).join('')}</select>
+      <div class="para">${aloc.reservadas[u.uid] ? `💰 Reservado: venda para <b>${esc(aloc.reservadas[u.uid].v.nome)}</b> (${esc(dataBR(aloc.reservadas[u.uid].v.data, false))})` : dono ? `➡️ Para <b>${esc(dono.nome)}</b>${aloc.fixos.has(u.uid) ? ' 📌' : ''} <button class="btn btn-mini" data-desvincular="${esc(dono.chave)}" data-uid="${esc(u.uid)}">✖ Desvincular</button>` : '🆓 Sem cliente da fila'}</div>
+      ${aloc.reservadas[u.uid] ? '' : `<select class="vincular" data-vincular-uid="${esc(u.uid)}"><option value="">🔗 Vincular a outro cliente…</option>${esperaAtiva().filter((e) => e.familia === u.familia && e !== dono).map((e) => `<option value="${esc(e.chave)}">${esc(e.nome)}${aloc.porChave[e.chave] ? ' (troca a unidade dele)' : ''}</option>`).join('')}</select>`}
       ${desvinculados.map((e) => `<div class="para">🚫 Desvinculado de ${esc(e.nome)} <button class="btn btn-mini" data-revincular="${esc(e.chave)}" data-uid="${esc(u.uid)}">↩ Desfazer</button></div>`).join('')}</div></div>`;
 }
 function telaEspera() {
@@ -346,7 +396,17 @@ function telaRetornos() {
     ${futuros.length ? futuros.map((r) => cartao({ ...r, prioridade: 'media', situacao: `Chamar em ${dataBR(r.data)} · ${r.pedido || ''}` })).join('') : '<div class="vazio">Nenhum retorno combinado.</div>'}`;
 }
 
-function blocoVendas() {
+function telaVendas() {
+  const corpo = blocoVendas(true);
+  return `<h1>💰 Vendas</h1><p class="sub">Vendas combinadas nas conversas, com o videogame do estoque da Gestão que vai em cada uma.</p>
+    ${corpo || '<div class="vazio">Nenhuma venda marcada. Quando um cliente combinar dia de entrega/retirada, ela aparece aqui.</div>'}`;
+}
+function linkVendasHoje() {
+  const hoje = hojeIso();
+  const n = vendasMarcadas().filter((v) => v.data === hoje && !(S.acoes[v._chave] || {}).cancelada && !(S.acoes[v._chave] || {}).concluida).length;
+  return n ? `<p class="sub"><a href="#/vendas">💰 ${n} venda(s) marcada(s) para hoje — ver</a></p>` : '';
+}
+function blocoVendas(naAba) {
   const hoje = hojeIso();
   const limiteAtraso = new Date(Date.now() - 3 * 864e5);
   const todas = vendasMarcadas().filter((v) => !(S.acoes[v._chave] || {}).cancelada);
@@ -359,7 +419,7 @@ function blocoVendas() {
     ${doDia.length ? `${total ? `<p class="sub">A receber hoje: <b>${esc(brlV(total))}</b></p>` : ''}${doDia.map(cartaoVenda).join('')}` : '<p class="sub">Nenhuma venda marcada para hoje.</p>'}
     ${atrasadas.length ? `<h2 style="margin:14px 0 8px">⚠️ Ficaram pendentes</h2>${atrasadas.map(cartaoVenda).join('')}` : ''}
     ${proximas.length ? `<h2 style="margin:14px 0 8px">🗓️ Próximas</h2>${proximas.map(cartaoVenda).join('')}` : ''}
-    <h2 style="margin:18px 0 8px">📲 Para chamar</h2>`;
+    ${naAba ? '' : '<h2 style="margin:18px 0 8px">📲 Para chamar</h2>'}`;
 }
 
 // ---------------------------------------------------------------- telas
@@ -429,7 +489,7 @@ function cartao(x) {
 
 function telaDia(dia, titulo) {
   if (!dia && titulo === 'Chamar hoje' && (S.noites.length || vendasMarcadas().length)) {
-    return `<h1>Chamar hoje</h1>${blocoNoite()}${blocoChegou()}${blocoVendas()}${blocoRetornos(new Set())}<div class="vazio">A lista de quem chamar chega uns minutos depois que o PC é ligado.</div>`;
+    return `<h1>Chamar hoje</h1>${blocoNoite()}${blocoChegou()}${linkVendasHoje()}${blocoRetornos(new Set())}<div class="vazio">A lista de quem chamar chega uns minutos depois que o PC é ligado.</div>`;
   }
   if (!dia) {
     const conectar = !NO_PC && !Sync.enabled();
@@ -461,7 +521,7 @@ function telaDia(dia, titulo) {
       <span class="chip">${itens.length} para chamar · ${pendentes} pendente(s)</span>
       ${Object.entries(porCanal).map(([c, n]) => { const [cls, nm] = CANAIS[c] || ['', c]; return `<span class="chip ${cls}">${esc(nm)} ${n}</span>`; }).join('')}
     </div>
-    ${titulo === 'Chamar hoje' ? blocoNoite() + blocoChegou() + blocoVendas() + blocoRetornos(chavesDoDia) : ''}
+    ${titulo === 'Chamar hoje' ? blocoNoite() + blocoChegou() + linkVendasHoje() + blocoRetornos(chavesDoDia) : ''}
     ${fixadosAntigos.length ? `<h2 style="margin:4px 0 8px">📌 Fixados</h2>${fixadosAntigos.map(cartao).join('')}<h2 style="margin:14px 0 8px">Lista do dia</h2>` : ''}
     ${itens.length ? itens.map(cartao).join('') : '<div class="vazio">Ninguém para retomar a partir desse dia. 👍</div>'}
     ${excluidos.length ? `<p class="sub"><a href="#" data-mostrar-excluidos="1">🗑️ ${excluidos.length} excluído(s) — ${S.mostrarExcluidos ? 'esconder' : 'mostrar'}</a></p>${S.mostrarExcluidos ? excluidos.map(cartao).join('') : ''}` : ''}
@@ -735,6 +795,7 @@ function rotear() {
   else if (h.startsWith('#/historico')) { html = telaHistorico(); aba = 'historico'; }
   else if (h.startsWith('#/retornos')) { html = telaRetornos(); aba = 'hoje'; }
   else if (h.startsWith('#/espera')) { html = telaEspera(); aba = 'espera'; }
+  else if (h.startsWith('#/vendas')) { html = telaVendas(); aba = 'vendas'; }
   else if (h.startsWith('#/ajustes')) { html = telaAjustes(); aba = 'ajustes'; }
   else html = telaDia(S.dias[0], 'Chamar hoje');
   $('#view').innerHTML = html;
@@ -766,6 +827,8 @@ document.addEventListener('click', async (e) => {
 document.addEventListener('change', (e) => {
   const sel = e.target.closest('[data-vincular-uid]');
   if (sel && sel.value) vincular(sel.value, sel.dataset.vincularUid, 'manual');
+  const tr = e.target.closest('[data-trocar-item]');
+  if (tr && tr.value) trocarUnidadeVenda(tr.dataset.trocarItem, tr.value);
 });
 // trocou de tela: volta ao topo (agora quem rola é o <main>, não a página)
 window.addEventListener('hashchange', () => { rotear(); $('#view').scrollTop = 0; });
