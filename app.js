@@ -654,7 +654,7 @@ function rotear() {
   } else if (h.startsWith('#/semana')) { html = telaSemana(h.split('/')[2]); aba = 'semana'; }
   else if (h.startsWith('#/historico')) { html = telaHistorico(); aba = 'historico'; }
   else if (h.startsWith('#/retornos')) { html = telaRetornos(); aba = 'hoje'; }
-  else if (h.startsWith('#/espera')) { html = telaEspera(); aba = 'hoje'; }
+  else if (h.startsWith('#/espera')) { html = telaEspera(); aba = 'espera'; }
   else if (h.startsWith('#/ajustes')) { html = telaAjustes(); aba = 'ajustes'; }
   else html = telaDia(S.dias[0], 'Chamar hoje');
   $('#view').innerHTML = html;
