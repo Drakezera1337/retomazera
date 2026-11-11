@@ -39,6 +39,9 @@ SUGESTÃO DE MENSAGEM (no estilo do João, informal, curta, 1 a 3 frases, sem em
 - SÓ use "Opa, <primeiro nome>! João do <produto> aqui" quando for o PRIMEIRO contato no WhatsApp com alguém que conversou com ele em outro lugar (OLX, Marketplace, Instagram) e passou o número na conversa — aí ele se identifica.
 Use o que mais converte nas vendas dele: oferecer foto/vídeo do aparelho real, simular parcelamento ("dá pra fazer em até 12x"), facilitar entrega/ponto de encontro, aceitar usado na troca, garantia de 3 meses, aparelho higienizado, oferecer separar/reservar. Não invente preços que não apareceram na conversa nem no estoque. Não dê desconto por conta própria.
 
+RETORNOS COMBINADOS: procure clientes que PEDIRAM para ser chamados numa data futura ou disseram quando vão poder comprar — "me chama mês que vem", "semana que vem eu te falo", "quando eu receber dia 5", "depois do Natal", "no fim do mês", "volto a falar em janeiro". Para cada um, monte um item em "retornos" com: nome, canal, contato, produto, "data" (AAAA-MM-DD em que o João deve chamar: converta a partir da data da mensagem — "mês que vem" = dia 1 do mês seguinte, ou o dia que o cliente citou; "semana que vem" = segunda-feira seguinte; "quando receber dia 5" = dia 5; "depois do Natal" = 26/12; "fim do mês" = dia 28; "janeiro" = 02/01), "pedido" (o que o cliente disse, curto, entre aspas), "motivo" (por que vale chamar) e "mensagem" (sugestão para enviar NAQUELE dia, no estilo do João — ele já conversou com a pessoa: "Bom dia, irmão, beleza? Você pediu pra eu te chamar agora no começo do mês, ainda tá querendo o PS5?").
+Quem tem retorno marcado para uma data futura NÃO entra na lista "itens" de hoje (a não ser que haja algo para fazer hoje também).
+
 VENDAS MARCADAS (separado da lista de retomada): procure nas conversas vendas que ficaram COMBINADAS para um dia — cliente que aceitou o preço e marcou entrega, retirada ou encontro (ex.: "amanhã às 18h no posto", "passo aí sábado", "pode trazer quarta"). Para cada uma, monte um item em "agendadas" com:
 - "data": AAAA-MM-DD do dia combinado (converta "amanhã", "sábado" etc. usando a data da mensagem); se não houver dia definido, NÃO inclua.
 - "hora": "18:00" ou "fim da tarde"/"manhã"; "local": endereço/ponto de encontro/"retira na loja"; "entrega": "entrega" | "retirada" | "encontro" | "envio".
@@ -55,6 +58,9 @@ SAÍDA: grave com a ferramenta Write o arquivo coletas\{DATA}\resultado.json (na
   "data": "{DATA}",
   "resumo": "2 a 4 frases: quantas conversas de venda houve em cada canal, quantas viraram venda, e o principal ponto de atenção para hoje",
   "fontes": {"WhatsApp": "N conversas lidas", "Facebook": "...", "OLX": "..."} (ou "não coletado"/"erro: ..."),
+  "retornos": [
+    {"nome": "...", "canal": "...", "contato": "...", "produto": "...", "data": "AAAA-MM-DD", "pedido": "\"me chama mês que vem\"", "motivo": "...", "mensagem": "..."}
+  ],
   "agendadas": [
     {"nome": "...", "canal": "...", "contato": "...", "data": "AAAA-MM-DD", "hora": "...", "local": "...", "entrega": "...",
      "itens": [{"descricao": "...", "valor": 0}], "total": 0, "pagamento": "...", "entrada": "...",

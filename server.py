@@ -39,6 +39,7 @@ PASTA_DIAS = os.path.join(BASE_DIR, "lembretes")      # histórico local (fora d
 PASTA_COLETAS = os.path.join(BASE_DIR, "coletas")     # mensagens copiadas pela extensão (fora do git)
 PASTA_SEMANAS = os.path.join(BASE_DIR, "semanas")     # resumos semanais (fora do git)
 PASTA_NOITES = os.path.join(BASE_DIR, "noites")       # análises da noite: preparar as vendas de amanhã (fora do git)
+RETORNOS = os.path.join(BASE_DIR, "retornos.json")    # "me chama mês que vem": guardado sem prazo (fora do git)
 ACOES = os.path.join(BASE_DIR, "acoes.json")          # Fixar/Já chamei/Vendido/Excluir por cliente (fora do git; cópia no Gist)
 NOMES_FONTES = {"whatsapp": "WhatsApp", "facebook": "Facebook", "olx": "OLX", "instagram": "Instagram"}
 SITE_PUBLICO = "https://drakezera1337.github.io/retomazera/"
@@ -113,6 +114,51 @@ def noites_locais(limite=3):
         except (OSError, ValueError):
             pass
     return saida
+
+
+# --------------------------------------------------------------------------- retornos combinados
+def chave_cliente(x):
+    canal = str(x.get("canal") or "").lower()
+    dig = re.sub(r"\D", "", str(x.get("contato") or ""))
+    if canal == "whatsapp" and len(dig) >= 8:
+        return f"whatsapp:{dig[-8:]}"
+    if canal in ("olx", "instagram") and str(x.get("contato") or "").startswith("http"):
+        return f"{canal}:{x['contato']}"
+    return f"{canal}:{str(x.get('nome') or '').strip().lower()}"
+
+
+def ler_retornos():
+    try:
+        with open(RETORNOS, encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def registrar_retornos(lista, origem_data):
+    """Guarda/atualiza os retornos por cliente (o pedido mais novo vale) e devolve o registro todo."""
+    reg = ler_retornos()
+    for x in lista or []:
+        if not isinstance(x, dict) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(x.get("data") or "")):
+            continue
+        k = chave_cliente(x)
+        reg[k] = {"nome": str(x.get("nome") or "")[:80], "canal": str(x.get("canal") or "")[:20],
+                  "contato": str(x.get("contato") or "")[:200], "produto": str(x.get("produto") or "")[:80],
+                  "data": x["data"], "pedido": str(x.get("pedido") or "")[:300], "motivo": str(x.get("motivo") or "")[:400],
+                  "mensagem": str(x.get("mensagem") or "")[:600], "combinadoEm": origem_data, "ts": int(time.time() * 1000)}
+    # limpa retornos vencidos há mais de 30 dias
+    limite = (date.today() - timedelta(days=30)).isoformat()
+    reg = {k: v for k, v in reg.items() if v.get("data", "") >= limite}
+    tmp = RETORNOS + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(reg, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, RETORNOS)
+    return reg
+
+
+def retornos_publicos():
+    return sorted(ler_retornos().values(), key=lambda v: v.get("data", ""))
 
 
 # --------------------------------------------------------------------------- ações dos cards
@@ -198,7 +244,8 @@ def json_do_arquivo(arquivos, nome, padrao):
 def publicar_gist():
     if not gist_cfg():
         return False
-    corpo = {"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "ts": int(time.time() * 1000)}
+    corpo = {"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "retornos": retornos_publicos(),
+             "ts": int(time.time() * 1000)}
     gist_request("PATCH", {"files": {"lembretes.json": {"content": json.dumps(corpo, ensure_ascii=False)}}})
     return True
 
@@ -266,6 +313,9 @@ def payload_dia(dia):
     itens = dia.get("itens") or []
     data_br = "/".join(reversed(dia.get("data", "").split("-"))) if dia.get("data") else ""
     hoje = [a for a in dia.get("agendadas") or [] if a.get("data") == dia.get("data")]
+    ret = [r for r in ler_retornos().values() if r.get("data") == dia.get("data")]
+    if ret:
+        itens = itens + [{"nome": r.get("nome"), "produto": "📅 combinado", "prioridade": "alta"} for r in ret]
     if hoje:
         n_v = len(hoje)
         quem = " · ".join(f"{a.get('hora') or ''} {a.get('nome') or '?'}".strip() for a in hoje[:3])
@@ -310,6 +360,7 @@ def salvar_dia(corpo):
             "quando": str(x.get("quando") or "")[:20],
         })
     agendadas = limpar_agendadas(corpo.get("agendadas") or [])
+    registrar_retornos(corpo.get("retornos") or [], data)
     dia = {"data": data, "geradoEm": int(time.time() * 1000), "resumo": str(corpo.get("resumo") or "")[:1500],
            "fontes": corpo.get("fontes") if isinstance(corpo.get("fontes"), dict) else {}, "itens": limpos,
            "agendadas": agendadas}
@@ -725,6 +776,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(self.status_json())
         if path == "/api/lembretes":
             return self._json({"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "acoes": ler_acoes(),
+                               "retornos": retornos_publicos(),
                                "ts": int(time.time() * 1000)})
         if path == "/api/coletas":
             data = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("data", [""])[0]
