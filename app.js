@@ -305,10 +305,25 @@ function alocarVendas() {
   }
   return { porUid, porItem };
 }
+// ordem de prioridade da fila, por modelo: a que o João arrumou (acoes['ordem:<modelo>'].lista), depois os
+// que entraram depois por data de entrada
+function filaOrdenada(lista = esperaAtiva()) {
+  const pos = (e) => { const l = S.acoes[`ordem:${e.familia}`]?.lista || []; const i = l.indexOf(e.chave); return i < 0 ? 1e6 : i; };
+  return lista.slice().sort((a, b) => pos(a) - pos(b) || (a.desde || '').localeCompare(b.desde || ''));
+}
+function moverNaFila(chave, dir) {
+  const e = S.espera.find((x) => x.chave === chave);
+  if (!e) return;
+  const l = filaOrdenada(esperaAtiva().filter((x) => x.familia === e.familia)).map((x) => x.chave);
+  const i = l.indexOf(chave), j = i + dir;
+  if (i < 0 || j < 0 || j >= l.length) return;
+  [l[i], l[j]] = [l[j], l[i]];
+  salvarAcoes({ [`ordem:${e.familia}`]: { lista: l, ts: Date.now() } });
+}
 function alocarFila() {
   const reservadas = alocarVendas().porUid;
   const porUid = {}, porChave = {};
-  const fila = esperaAtiva().slice().sort((a, b) => (a.desde || '').localeCompare(b.desde || ''));
+  const fila = filaOrdenada();
   const serve = (x, e) => !reservadas[x.uid] && (x.atende ? x.atende.includes(e.chave) : x.para === e.chave);
   const fora = (e) => S.acoes[chaveCliente(e)]?.semUnidade || [];
   const dar = (e, u) => { porUid[u.uid] = e; porChave[e.chave] = u; };
@@ -387,8 +402,8 @@ function telaEspera() {
     return `<details class="estoque" open><summary>📦 Estoque na Gestão: ${disp} disponível(is) · ${us.length - disp} chegando</summary>${us.map((u) => unidadeEstoque(u, aloc)).join('')}</details>`;
   };
   const vaiUsar = (e) => { const u = aloc.porChave[e.chave]; return u ? `${u.situacao === 'disponivel' ? '✅' : '🚚'} Vai usar: ${u.nome || u.item} (custo ${brlV(u.custo)})` : ''; };
-  return `<h1>⏳ Fila de espera</h1><p class="sub">Clientes esperando um modelo sem estoque. Quando a Gestão tiver o item em "Aguardando venda", você recebe a notificação e eles aparecem na aba Hoje. Cada unidade vai para o primeiro da fila que ela atende.</p>
-    ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<h2 style="margin:14px 0 8px">${esc(f)} (${l.length})${l.some((e) => e.chegou) ? ' · 🔔 tem no estoque' : ''}</h2>${blocoEstoque(f)}${l.map((e) => cardEspera(e, Boolean(e.chegou), vaiUsar(e))).join('')}`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
+  return `<h1>⏳ Fila de espera</h1><p class="sub">Clientes esperando um modelo sem estoque. Quando a Gestão tiver o item em "Aguardando venda", você recebe a notificação e eles aparecem na aba Hoje. Cada unidade vai para o primeiro da fila que ela atende — use ▲ ▼ para mudar a prioridade.</p>
+    ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<h2 style="margin:14px 0 8px">${esc(f)} (${l.length})${l.some((e) => e.chegou) ? ' · 🔔 tem no estoque' : ''}</h2>${blocoEstoque(f)}${filaOrdenada(l).map((e, i, arr) => `<div class="ordem-fila"><b>${i + 1}º da fila</b><span><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="-1" ${i ? '' : 'disabled'}>▲ Subir</button><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="1" ${i < arr.length - 1 ? '' : 'disabled'}>▼ Descer</button></span></div>${cardEspera(e, Boolean(e.chegou), vaiUsar(e))}`).join('')}`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
 }
 
 function telaRetornos() {
@@ -826,6 +841,8 @@ document.addEventListener('click', async (e) => {
     try { await navigator.clipboard.writeText(x?.mensagem || ''); toast('Mensagem copiada'); } catch { toast('Não consegui copiar'); }
     return;
   }
+  const mv = e.target.closest('[data-mover]');
+  if (mv) { moverNaFila(mv.dataset.mover, Number(mv.dataset.dir)); return; }
   const dv = e.target.closest('[data-desvincular],[data-revincular]');
   if (dv) { vincular(dv.dataset.desvincular || dv.dataset.revincular, dv.dataset.uid, dv.dataset.desvincular ? 'desvincular' : 'desfazer'); return; }
   const b = e.target.closest('[data-acao]');

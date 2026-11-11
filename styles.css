@@ -93,3 +93,6 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 .unidade select.vincular { margin-top: 6px; padding: 6px 8px; font-size: 13px; width: auto; max-width: 100%; }
 .resultado .res-linha { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--borda); }
 .resultado .res-total { font-weight: 700; border-bottom: 0; }
+.ordem-fila { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 12px 0 4px; font-size: 14px; }
+.ordem-fila span { display: flex; gap: 6px; }
+.ordem-fila button:disabled { opacity: .35; }
