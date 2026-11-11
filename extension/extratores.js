@@ -219,7 +219,9 @@ async function extrairFacebook(desde, ignorar = []) {
 // ------------------------------------------------------------------ WhatsApp Web
 // A lista de conversas do período vem de WAWebCollections.Chat (só leitura de dados já carregados —
 // NÃO usa funções que carregam mensagens). As mensagens são lidas da tela, rolando o painel.
-async function extrairWhatsapp(desde, ignorar = [], limite = 60) {
+// opcoes: { primeira (espera a sincronização só na 1ª parte), feitos: [chaves já lidas], prazoMs }.
+// O Chrome encerra a extensão se uma tarefa passa de ~5 min: o background chama em partes de ~3 min.
+async function extrairWhatsapp(desde, ignorar = [], limite = 60, opcoes = {}) {
   // período: tudo desde a última coleta (desde, em ms) até agora
   const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const diasJanela = (() => { const st = new Set(); const d = new Date(desde); d.setHours(0, 0, 0, 0); const h = new Date(); for (; d <= h; d.setDate(d.getDate() + 1)) st.add(iso(d)); return st; })();
@@ -256,10 +258,13 @@ async function extrairWhatsapp(desde, ignorar = [], limite = 60) {
   if (!pronto) return { erro: document.querySelector('canvas') ? 'WhatsApp Web deslogado (pede QR)' : 'WhatsApp Web não carregou', conversas: [] };
   // WhatsApp Web recém-aberto ainda baixa as mensagens do celular: espera a sincronização terminar
   // (some o aviso "Sincronizando…/Carregando…" da lista) e a lista de conversas parar de mudar.
-  await sleep(8000);
+  const primeira = opcoes.primeira !== false;
+  const fimPrazo = Date.now() + (opcoes.prazoMs || 36e5);
+  const jaFeitos = new Set(opcoes.feitos || []);
+  if (primeira) await sleep(8000);
   const sincronizando = () => /sincroniz|carregando (suas )?(conversas|mensagens)|syncing|loading (your )?(chats|messages)/i.test(document.querySelector('#side')?.innerText || '')
     || !!document.querySelector('#side [role="progressbar"], [data-testid="chat-list-sync-progress"]');
-  for (let i = 0, ultimo = -1, iguais = 0; i < 60; i++) {
+  for (let i = 0, ultimo = -1, iguais = 0; primeira && i < 60; i++) {
     const t = Math.max(0, ...window.require('WAWebCollections').Chat.getModelsArray().map((c) => c.t || 0));
     if (!sincronizando() && t === ultimo) { if (++iguais >= 3) break; } else iguais = 0;
     ultimo = t;
@@ -275,7 +280,8 @@ async function extrairWhatsapp(desde, ignorar = [], limite = 60) {
     })
     .filter((c) => !c.empresa && !ignorado(c.nm, c.ph))
     .sort((a, b) => b.t - a.t)
-    .slice(0, limite);
+    .slice(0, limite)
+    .filter((c) => !jaFeitos.has(c.ph || c.nm));
 
   const box = await esperar(() => document.querySelector('#side input[data-tab="3"]') || document.querySelector('#side [contenteditable="true"]'), 10000);
   if (!box) return { erro: 'não achei a busca do WhatsApp', conversas: [] };
@@ -369,8 +375,11 @@ async function extrairWhatsapp(desde, ignorar = [], limite = 60) {
     return { titulo, msgs: ordem.map((k) => mapa.get(k)).filter(Boolean) };
   }
 
-  const conversas = [];
+  const conversas = [], feitosAgora = [];
+  let restantes = false;
   for (const c of chats) {
+    if (Date.now() > fimPrazo) { restantes = true; break; } // continua na próxima parte
+    feitosAgora.push(c.ph || c.nm);
     try {
       await buscar(c.ph ? c.ph.replace(/^55/, '') : c.nm);
       const r = await lerAberta();
@@ -394,7 +403,7 @@ async function extrairWhatsapp(desde, ignorar = [], limite = 60) {
   }
   // limpa a busca
   try { setValor.call(box, ''); box.dispatchEvent(new Event('input', { bubbles: true })); } catch { /* ok */ }
-  return { conversas };
+  return { conversas, feitos: feitosAgora, restantes };
 }
 
 // ------------------------------------------------------------------ Instagram (Direct da loja)

@@ -49,7 +49,14 @@ async function verificar() {
   if (a.dia === hojeIso() && a.ultimaTentativa && Date.now() - a.ultimaTentativa < 20 * 60000) return;
   coletar('auto');
 }
+async function destravar() {
+  const { est } = await chrome.storage.local.get('est');
+  if (est && est.rodando && !rodando && Date.now() - (est.inicio || 0) > 15 * 60000) {
+    await chrome.storage.local.set({ est: { ...est, rodando: false, atual: '', fim: Date.now(), interrompida: true } });
+  }
+}
 async function iniciar() {
+  await destravar();
   await chrome.alarms.clear('coleta'); // alarme antigo (horário fixo)
   chrome.alarms.create('verificar', { delayInMinutes: 1, periodInMinutes: 1 });
 }
@@ -114,8 +121,12 @@ let rodando = false;
 async function coletar(origem) {
   if (rodando) return;
   rodando = true;
+  // mantém a extensão acordada durante a coleta (o Chrome encerra o service worker parado por 30 s)
+  const vivo = setInterval(() => { chrome.runtime.getPlatformInfo(() => {}); }, 20000);
   const c = await config();
-  const data = hojeIso();
+  // coleta da noite feita depois da meia-noite (até 6h) vale para o dia anterior
+  const madrugada = origem === 'noite' && new Date().getHours() < 6;
+  const data = madrugada ? (() => { const d = new Date(); d.setDate(d.getDate() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })() : hojeIso();
   const { est: anterior } = await chrome.storage.local.get('est'); // antes de sobrescrever o estado
   const inicioAnterior = anterior && !anterior.rodando ? anterior.inicio : null;
   const ativas = Object.keys(FONTES).filter((k) => c.fontes[k]);
@@ -148,11 +159,32 @@ async function coletar(origem) {
         }
         await new Promise((r) => setTimeout(r, 3000));
         // noite: só as conversas de hoje (não mexe no ponto de partida da coleta da manhã)
-        const meiaNoite = new Date(); meiaNoite.setHours(0, 0, 0, 0);
+        const [aa, mm, dd] = data.split('-').map(Number);
+        const meiaNoite = new Date(aa, mm - 1, dd);
         const desde = origem === 'noite' ? meiaNoite.getTime() : await desdeDe(k, inicioAnterior);
         const inicioFonte = Date.now();
-        const [res] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func, args: [desde, c.ignorar || []] });
-        const r = (res && res.result) || { erro: 'sem resposta do extrator', conversas: [] };
+        let r;
+        if (k === 'whatsapp') {
+          // em partes de até 3 min (cada chamada bem abaixo do limite de ~5 min do Chrome)
+          const todas = []; let feitos = [];
+          for (let parte = 0; parte < 8; parte++) {
+            const [res] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func,
+              args: [desde, c.ignorar || [], 60, { primeira: parte === 0, feitos, prazoMs: 180000 }] });
+            const p = (res && res.result) || { erro: 'sem resposta do extrator', conversas: [] };
+            if (p.erro) { r = p; break; }
+            todas.push(...(p.conversas || []));
+            feitos = feitos.concat(p.feitos || []);
+            r = { ...p, conversas: todas };
+            if (!p.restantes) break;
+            prog[k] = { estado: 'coletando' };
+            await avisarProgresso(c, origem, { ...prog, [k]: { estado: 'coletando' } }, false);
+          }
+        } else {
+          const [res] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func, args: [desde, c.ignorar || []] });
+          r = (res && res.result) || { erro: 'sem resposta do extrator', conversas: [] };
+        }
+        r = r || { erro: 'sem resposta do extrator', conversas: [] };
+        delete r.feitos; delete r.restantes;
         const corpo = { fonte: k, data, perfil: c.perfil, lote: ativas, turno: origem === 'noite' ? 'noite' : '', desde, ate: inicioFonte, coletadoEm: Date.now(), ...r };
         const resp = await fetch(`${SERVIDOR}/api/coleta`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
         const j = await resp.json().catch(() => ({}));
@@ -179,6 +211,7 @@ async function coletar(origem) {
       const a = ant && ant.dia === data ? ant : { dia: data, tentativas: 0 };
       await chrome.storage.local.set({ [chave]: { dia: data, ok: a.ok || algumaOk, tentativas: (a.tentativas || 0) + 1, ultimaTentativa: Date.now(), feitaEm: algumaOk ? Date.now() : a.feitaEm } });
     }
+    clearInterval(vivo);
     rodando = false;
     await estado({ rodando: false, atual: '', fim: Date.now() });
   }
