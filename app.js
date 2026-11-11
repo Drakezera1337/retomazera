@@ -414,12 +414,12 @@ function blocoVendas(naAba) {
   const atrasadas = todas.filter((v) => v.data < hoje && new Date(v.data) >= limiteAtraso && !(S.acoes[v._chave] || {}).concluida);
   const proximas = todas.filter((v) => v.data > hoje);
   if (!doDia.length && !atrasadas.length && !proximas.length) return '';
-  const total = doDia.filter((v) => !(S.acoes[v._chave] || {}).concluida).reduce((s, v) => s + (Number(v.total) || 0), 0);
+  const r = resultadoVendas(doDia);
   return `<h2 style="margin:4px 0 8px">📦 Vendas do dia${doDia.length ? ` (${doDia.length})` : ''}</h2>
-    ${doDia.length ? `${total ? `<p class="sub">A receber hoje: <b>${esc(brlV(total))}</b></p>` : ''}${doDia.map(cartaoVenda).join('')}` : '<p class="sub">Nenhuma venda marcada para hoje.</p>'}
+    ${doDia.length ? `${r.fat ? `<p class="sub">Faturamento <b>${esc(brlV(r.fat))}</b> · Lucro <b class="lucro">${esc(brlV(r.lucro))}</b></p>` : ''}${doDia.map(cartaoVenda).join('')}` : '<p class="sub">Nenhuma venda marcada para hoje.</p>'}
     ${atrasadas.length ? `<h2 style="margin:14px 0 8px">⚠️ Ficaram pendentes</h2>${atrasadas.map(cartaoVenda).join('')}` : ''}
     ${proximas.length ? `<h2 style="margin:14px 0 8px">🗓️ Próximas</h2>${proximas.map(cartaoVenda).join('')}` : ''}
-    ${naAba ? painelResultado([['Hoje', doDia], ['Pendentes', atrasadas], ['Próximas', proximas]]) : '<h2 style="margin:18px 0 8px">📲 Para chamar</h2>'}`;
+    ${naAba ? '' : '<h2 style="margin:18px 0 8px">📲 Para chamar</h2>'}`;
 }
 // faturamento = total combinado; lucro = faturamento − custo (Gestão) dos videogames que vão em cada venda.
 // Item sem custo conhecido (jogo, acessório, taxa) entra inteiro no lucro — o painel avisa quantos são.
@@ -435,18 +435,6 @@ function resultadoVendas(lista) {
     }
   }
   return { fat, custo, lucro: fat - custo, semCusto };
-}
-function painelResultado(grupos) {
-  const linhas = grupos.filter(([, l]) => l.length).map(([nome, l]) => [nome, resultadoVendas(l), l.length]);
-  if (!linhas.length) return '';
-  const tudo = resultadoVendas(grupos.flatMap(([, l]) => l));
-  const semCusto = tudo.semCusto;
-  return `<div class="painel resultado">
-    <h2 style="margin:0 0 8px">📊 Faturamento e lucro</h2>
-    ${linhas.map(([nome, r, n]) => `<div class="res-linha"><span>${esc(nome)} <span class="sub">(${n})</span></span><span>${esc(brlV(r.fat))} · <b class="lucro">${esc(brlV(r.lucro))}</b></span></div>`).join('')}
-    ${linhas.length > 1 ? `<div class="res-linha res-total"><span>Total</span><span>${esc(brlV(tudo.fat))} · <b class="lucro">${esc(brlV(tudo.lucro))}</b></span></div>` : ''}
-    <p class="sub" style="margin:8px 0 0">Faturamento · <b>lucro</b> (faturamento − custo dos videogames na Gestão: ${esc(brlV(tudo.custo))}).${semCusto ? ` ${semCusto} item(ns) sem custo na Gestão (jogo/acessório) entram inteiros no lucro.` : ''}</p>
-  </div>`;
 }
 
 // ---------------------------------------------------------------- telas
