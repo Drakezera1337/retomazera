@@ -252,9 +252,41 @@ function blocoChegou() {
   return `${chegou.length ? `<h2 style="margin:4px 0 8px">🔔 Chegou o que estavam esperando (${chegou.length})</h2>${chegou.map((e) => cardEspera(e, true)).join('')}` : ''}
     ${fila ? `<p class="sub"><a href="#/espera">⏳ ${fila} cliente(s) na fila de espera — ver</a></p>` : ''}`;
 }
-// unidades da Gestão (disponíveis e chegando) do modelo, com foto, custo e para quem cada uma vai
+// unidades da Gestão (disponíveis e chegando) do modelo, com foto, custo e para quem cada uma vai.
+// A divisão é refeita aqui (e não só no PC) para o "Desvincular" valer na hora: o primeiro da fila pega a
+// primeira unidade que o atende, pulando as que o João desvinculou dele (acoes[cliente].semUnidade).
+function alocarFila() {
+  const porUid = {}, porChave = {};
+  const fila = esperaAtiva().slice().sort((a, b) => (a.desde || '').localeCompare(b.desde || ''));
+  const serve = (x, e) => (x.atende ? x.atende.includes(e.chave) : x.para === e.chave);
+  const fora = (e) => S.acoes[chaveCliente(e)]?.semUnidade || [];
+  const dar = (e, u) => { porUid[u.uid] = e; porChave[e.chave] = u; };
+  // 1) divisão normal; 2) quem teve a unidade desvinculada larga ela (que fica livre, sem mexer nos outros);
+  // 3) quem ficou sem unidade pega uma que sobrou e que não foi desvinculada dele
+  for (const e of fila) { const u = S.estoque.find((x) => !porUid[x.uid] && serve(x, e)); if (u) dar(e, u); }
+  const largadas = new Set();
+  for (const e of fila) { const u = porChave[e.chave]; if (u && fora(e).includes(u.uid)) { delete porUid[u.uid]; delete porChave[e.chave]; largadas.add(u.uid); } }
+  for (const e of fila) {
+    if (porChave[e.chave]) continue;
+    const u = S.estoque.find((x) => !porUid[x.uid] && !largadas.has(x.uid) && !fora(e).includes(x.uid) && serve(x, e))
+      || S.estoque.find((x) => !porUid[x.uid] && !fora(e).includes(x.uid) && serve(x, e));
+    if (u) dar(e, u);
+  }
+  return { porUid, porChave };
+}
+function vincular(chaveEspera, uid, desvincular) {
+  const e = S.espera.find((x) => x.chave === chaveEspera);
+  if (!e) return;
+  const ck = chaveCliente(e), atual = S.acoes[ck] || {};
+  const fora = new Set(atual.semUnidade || []);
+  desvincular ? fora.add(uid) : fora.delete(uid);
+  salvarAcoes({ [ck]: { ...atual, nome: e.nome, canal: e.canal, contato: e.contato, semUnidade: [...fora], ts: Date.now() } });
+  toast(desvincular ? `Desvinculado de ${e.nome}` : `Vinculado de novo a ${e.nome}`);
+}
 const ICONE_FAMILIA = (f) => (/PS|PlayStation/i.test(f) ? '🎮' : /Xbox/i.test(f) ? '🟩' : /Switch/i.test(f) ? '🕹️' : /iPhone/i.test(f) ? '📱' : '🎮');
-function unidadeEstoque(u) {
+function unidadeEstoque(u, aloc) {
+  const dono = aloc.porUid[u.uid];
+  const desvinculados = esperaAtiva().filter((e) => (S.acoes[chaveCliente(e)]?.semUnidade || []).includes(u.uid));
   const st = u.situacao === 'disponivel' ? '<span class="st-ok">✅ Disponível</span>' : '<span class="st-chegando">🚚 Chegando</span>';
   const lucro = u.preco && u.custo ? Number(u.preco) - Number(u.custo) : null;
   return `<div class="unidade">
@@ -262,20 +294,22 @@ function unidadeEstoque(u) {
     <div class="unidade-txt"><b>${esc(u.nome || u.item)}</b>
       <div>${st}</div>
       <div>Custo <b>${brlV(u.custo) || '—'}</b>${u.preco ? ` · Venda ${brlV(u.preco)}` : ''}${lucro != null ? ` · <span class="lucro">+${brlV(lucro)}</span>` : ''}</div>
-      <div class="para">${u.paraNome ? `➡️ Para <b>${esc(u.paraNome)}</b>` : '🆓 Sem cliente da fila'}</div></div></div>`;
+      <div class="para">${dono ? `➡️ Para <b>${esc(dono.nome)}</b> <button class="btn btn-mini" data-desvincular="${esc(dono.chave)}" data-uid="${esc(u.uid)}">✖ Desvincular</button>` : '🆓 Sem cliente da fila'}</div>
+      ${desvinculados.map((e) => `<div class="para">🚫 Desvinculado de ${esc(e.nome)} <button class="btn btn-mini" data-revincular="${esc(e.chave)}" data-uid="${esc(u.uid)}">↩ Desfazer</button></div>`).join('')}</div></div>`;
 }
 function telaEspera() {
   const lista = esperaAtiva();
   const porFamilia = {};
   lista.forEach((e) => { (porFamilia[e.familia] = porFamilia[e.familia] || []).push(e); });
+  const aloc = alocarFila();
   const unid = (f) => S.estoque.filter((u) => u.familia === f);
   const blocoEstoque = (f) => {
     const us = unid(f);
     if (!us.length) return '<p class="sub">📦 Nada desse modelo na Gestão (nem disponível, nem chegando).</p>';
     const disp = us.filter((u) => u.situacao === 'disponivel').length;
-    return `<details class="estoque" open><summary>📦 Estoque na Gestão: ${disp} disponível(is) · ${us.length - disp} chegando</summary>${us.map(unidadeEstoque).join('')}</details>`;
+    return `<details class="estoque" open><summary>📦 Estoque na Gestão: ${disp} disponível(is) · ${us.length - disp} chegando</summary>${us.map((u) => unidadeEstoque(u, aloc)).join('')}</details>`;
   };
-  const vaiUsar = (e) => { const u = S.estoque.find((x) => x.para && x.para === e.chave); return u ? `${u.situacao === 'disponivel' ? '✅' : '🚚'} Vai usar: ${u.nome || u.item} (custo ${brlV(u.custo)})` : ''; };
+  const vaiUsar = (e) => { const u = aloc.porChave[e.chave]; return u ? `${u.situacao === 'disponivel' ? '✅' : '🚚'} Vai usar: ${u.nome || u.item} (custo ${brlV(u.custo)})` : ''; };
   return `<h1>⏳ Fila de espera</h1><p class="sub">Clientes esperando um modelo sem estoque. Quando a Gestão tiver o item em "Aguardando venda", você recebe a notificação e eles aparecem na aba Hoje. Cada unidade vai para o primeiro da fila que ela atende.</p>
     ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<h2 style="margin:14px 0 8px">${esc(f)} (${l.length})${l.some((e) => e.chegou) ? ' · 🔔 tem no estoque' : ''}</h2>${blocoEstoque(f)}${l.map((e) => cardEspera(e, Boolean(e.chegou), vaiUsar(e))).join('')}`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
 }
@@ -689,6 +723,8 @@ document.addEventListener('click', async (e) => {
     try { await navigator.clipboard.writeText(x?.mensagem || ''); toast('Mensagem copiada'); } catch { toast('Não consegui copiar'); }
     return;
   }
+  const dv = e.target.closest('[data-desvincular],[data-revincular]');
+  if (dv) { vincular(dv.dataset.desvincular || dv.dataset.revincular, dv.dataset.uid, Boolean(dv.dataset.desvincular)); return; }
   const b = e.target.closest('[data-acao]');
   if (b) { marcar(b.dataset.chave, b.dataset.acao, b.dataset.ligado === '1'); return; }
   if (e.target.closest('[data-mostrar-excluidos]')) { e.preventDefault(); S.mostrarExcluidos = !S.mostrarExcluidos; rotear(); }

@@ -346,9 +346,12 @@ def estoque_fila(reg=None):
                          "custo": round(float(compra or 0) + float(reparo_v or 0), 2), "preco": prev, "compra": dc,
                          "foto": miniatura(lista_fotos[0]) if lista_fotos else "", "para": "", "paraNome": ""})
     unidades.sort(key=lambda u: (u["familia"], u["situacao"] != "disponivel", u["compra"] or ""))
+    for u in unidades:  # quem da fila essa unidade atende (o app refaz a divisão na hora, ao desvincular)
+        u["atende"] = [k for k, e in fila if e.get("familia") == u["familia"] and atende(e, u)]
     usadas = set()
     for k, e in sorted(fila, key=lambda x: x[1].get("desde") or ""):
-        u = next((u for u in unidades if u["uid"] not in usadas and u["familia"] == e.get("familia") and atende(e, u)), None)
+        fora = set(acoes.get(k.split("|")[0], {}).get("semUnidade") or [])  # unidades que o João desvinculou dele
+        u = next((u for u in unidades if u["uid"] not in usadas and u["uid"] not in fora and k in u["atende"]), None)
         if u:
             usadas.add(u["uid"])
             u["para"], u["paraNome"] = k, e.get("nome") or ""
