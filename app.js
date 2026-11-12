@@ -198,7 +198,7 @@ function cartaoVenda(v) {
     ${v.observacoes ? `<p>📝 ${esc(v.observacoes)}</p>` : ''}
     ${v.resumo ? `<p class="sub">${esc(v.resumo)}</p>` : ''}
     <div class="acoes">
-      ${link ? `<a class="btn btn-verde" href="${esc(link.split('?')[0])}" target="_blank" rel="noopener">💬 Abrir conversa</a>` : ''}
+      ${botaoConversa(link && link.split('?')[0])}
       <button class="btn" data-copiar-venda="${esc(v._chave)}">📋 Copiar</button>
     </div>
     <div class="acoes">
@@ -444,7 +444,7 @@ function cartaoOferta(o) {
     ${o.ultimaMsg ? `<p class="sub">“${esc(o.ultimaMsg)}”${o.quando ? ` · ${esc(o.quando)}` : ''} · ${esc(dataBR(o.atualizado, false))}</p>` : ''}
     ${o.mensagem ? `<div class="msg">${esc(o.mensagem)}</div>` : ''}
     <div class="acoes">
-      ${link ? `<a class="btn btn-verde" href="${esc(link.split('?')[0])}" target="_blank" rel="noopener">💬 Abrir conversa</a>` : ''}
+      ${botaoConversa(link && link.split('?')[0])}
       ${o.mensagem ? `<button class="btn" data-copiar="${esc(o.chave)}">📋 Copiar resposta</button>` : ''}
     </div>
     <div class="acoes">
@@ -527,6 +527,17 @@ function resultadoVendas(lista) {
 const CANAIS = { whatsapp: ['wpp', 'WhatsApp'], facebook: ['fb', 'Facebook'], olx: ['olx', 'OLX'], instagram: ['ig', 'Instagram'] };
 const PRIOR = { alta: 'Alta', media: 'Média', média: 'Média', baixa: 'Baixa' };
 
+// Botão "Abrir conversa". No computador, link do WhatsApp vai direto pelo app (whatsapp://), sem abrir uma aba
+// do wa.me que fica sobrando no navegador; no celular continua o wa.me (o sistema já abre o app).
+const NO_CELULAR = /iPhone|iPad|Android/i.test(navigator.userAgent);
+function botaoConversa(link) {
+  if (!link) return '';
+  const m = link.match(/^https:\/\/wa\.me\/(\d+)(?:\?text=(.*))?$/);
+  if (m && !NO_CELULAR) {
+    return `<a class="btn btn-verde" href="${esc(`whatsapp://send?phone=${m[1]}${m[2] ? `&text=${m[2]}` : ''}`)}">💬 Abrir conversa</a>`;
+  }
+  return `<a class="btn btn-verde" href="${esc(link)}" target="_blank" rel="noopener">💬 Abrir conversa</a>`;
+}
 function linkConversa(x) {
   const canal = (x.canal || '').toLowerCase();
   const contato = x.contato || '';
@@ -577,7 +588,7 @@ function cartao(x) {
     ${x.mensagem ? `<span class="rot">Sugestão de mensagem</span><div class="msg">${esc(x.mensagem)}</div>` : ''}
     <div class="acoes">
       ${x.mensagem ? `<button class="btn" data-copiar="${esc(chave)}">📋 Copiar</button>` : ''}
-      ${link ? `<a class="btn btn-verde" href="${esc(link)}" target="_blank" rel="noopener">💬 Abrir conversa</a>` : ''}
+      ${botaoConversa(link)}
     </div>
     <div class="acoes">
       ${a.excluido ? bt('excluido', true, '↩️ Restaurar', '') : `
