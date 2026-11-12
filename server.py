@@ -1290,6 +1290,34 @@ def juntar_ronda(data, rodada, corpo):
     return dia, mudou
 
 
+def retomar_pendentes():
+    """Ao iniciar: a espera pelas outras fontes (até 20 min) vive só na memória — se o servidor reiniciou
+    nesse meio tempo, a análise se perdia. Reagenda as coletas de hoje/ontem que ficaram sem análise
+    (dia, noite e rondas). As de ontem rodam sem notificar."""
+    hoje = date.today()
+    for dias_atras in (1, 0):
+        data = (hoje - timedelta(days=dias_atras)).isoformat()
+        notificar = dias_atras == 0
+        try:
+            if coletas_do_dia(data) and not ja_analisada(data):
+                print(f"[pendente] {data}: análise do dia")
+                threading.Thread(target=analisar, args=(data, notificar), daemon=True).start()
+                time.sleep(5)
+            noite = coletas_do_dia(data, "noite")
+            arq = os.path.join(PASTA_NOITES, data + ".json")
+            ultima = max([c.get("coletadoEm") or 0 for c in noite.values()] or [0])
+            if noite and not (os.path.exists(arq) and os.path.getmtime(arq) * 1000 >= ultima):
+                print(f"[pendente] {data}: análise da noite")
+                analisar_noite(data, notificar=notificar)
+            pasta_r = os.path.join(PASTA_COLETAS, data, "rondas")
+            for hh in sorted(os.listdir(pasta_r)) if os.path.isdir(pasta_r) else []:
+                if re.fullmatch(r"\d{2}", hh) and not os.path.exists(os.path.join(pasta_r, hh, "resultado.json")):
+                    print(f"[pendente] {data}: ronda {hh}h")
+                    analisar_ronda(data, hh, notificar=False)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[pendente] {data}: {exc}")
+
+
 def payload_noite(n):
     vendas = [a for a in n.get("agendadas") or [] if a.get("data") == n.get("amanha")]
     prep = n.get("preparar") or []
@@ -1337,6 +1365,12 @@ def analisar_noite(data, notificar=True, forcar=False):
             corpo = json.load(f)
         # reaproveita a limpeza da análise do dia para as vendas marcadas
         limpas = limpar_agendadas(corpo.get("agendadas") or [])
+        registrar_retornos(corpo.get("retornos") or [], data)
+        registrar_ofertas(corpo.get("ofertas") or [], data)
+        try:
+            registrar_espera(corpo.get("espera") or [], data)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[espera] {exc}")
         confirmar = [x for x in (corpo.get("confirmar") or []) if isinstance(x, dict)][:15]
         noite = {"data": data, "amanha": amanha, "geradoEm": int(time.time() * 1000),
                  "resumo": str(corpo.get("resumo") or "")[:1500], "agendadas": limpas,
@@ -1662,6 +1696,7 @@ def main():
         return
     threading.Thread(target=laco_gist, daemon=True).start()
     threading.Thread(target=laco_espera, daemon=True).start()
+    threading.Timer(60, retomar_pendentes).start()
     cfg = gist_cfg()
     print("=" * 60)
     print(" RETOMAZERA rodando!")
