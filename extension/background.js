@@ -1,7 +1,7 @@
 // Retomazera Coletor — uma vez por dia, alguns minutos depois que o PC/Chrome é ligado (a partir das
 // 06:00), abre os sites marcados NESTE perfil do Chrome, copia as mensagens desde a coleta automática
 // anterior (madrugada incluída) e manda ao server.py do Retomazera (127.0.0.1:8797/api/coleta), que
-// salva em coletas/AAAA-MM-DD/<fonte>.json. A tarefa do Claude confere a cada 30 min e analisa.
+// salva em coletas/AAAA-MM-DD/<fonte>.json e chama o Claude. Depois, rondas de 2 em 2 h (8h–22h) e a da noite.
 // Só leitura: nada é enviado nos sites.
 importScripts('extratores.js');
 
@@ -13,13 +13,17 @@ const FONTES = {
   instagram: { nome: 'Instagram', url: 'https://www.instagram.com/direct/inbox/', padrao: null, func: extrairInstagram },
 };
 const PADRAO = { fontes: { whatsapp: false, facebook: false, olx: false, instagram: false }, horaMin: 6, espera: 3, perfil: '',
-  noite: true, horaNoite: 21, avisos: true,
+  noite: true, horaNoite: 21, avisos: true, ronda: true,
   ignorar: ['Pai - Pessoal', 'Mãe', 'Amor', 'Santo Burger', 'Lucian'] };
 
 async function config() {
   const { cfg } = await chrome.storage.local.get('cfg');
   return { ...PADRAO, ...(cfg || {}), fontes: { ...PADRAO.fontes, ...((cfg || {}).fontes || {}) } };
 }
+
+// Rondas: coleta rápida (só o que é novo) nos horários pares das 8h às 22h, depois da coleta inicial do dia.
+// Horário fixo para os dois perfis do Chrome caírem na mesma ronda (o servidor junta por hora).
+const RONDAS = [8, 10, 12, 14, 16, 18, 20, 22];
 
 // ---- quando coletar: 1x por dia, na primeira oportunidade a partir de horaMin, esperando 'espera'
 // minutos depois que o Chrome abriu (dá tempo de o WhatsApp e os sites carregarem).
@@ -44,7 +48,19 @@ async function verificar() {
       && !(n.dia === hojeIso() && n.ultimaTentativa && Date.now() - n.ultimaTentativa < 20 * 60000)) {
     return coletar('noite');
   }
-  if (a.dia === hojeIso() && (a.ok || (a.tentativas || 0) >= 3)) return; // já coletou hoje (ou desistiu)
+  if (a.dia === hojeIso() && (a.ok || (a.tentativas || 0) >= 3)) { // já coletou hoje (ou desistiu): rondas
+    if (!a.ok || c.ronda === false) return;
+    const h = agora.getHours();
+    const slot = RONDAS.filter((x) => x <= h).pop();
+    if (slot == null || h - slot >= 2 || h >= (c.horaNoite ?? 23)) return;
+    const inicioSlot = new Date(agora); inicioSlot.setHours(slot, 0, 0, 0);
+    if ((a.feitaEm || 0) > inicioSlot.getTime() - 45 * 60000) return; // a coleta inicial acabou de cobrir
+    const { autoRonda } = await chrome.storage.local.get('autoRonda');
+    const r = (autoRonda && autoRonda.dia === hojeIso() && autoRonda.slots) || {};
+    const s = r[slot] || {};
+    if (s.ok || (s.tentativas || 0) >= 2 || (s.ultimaTentativa && Date.now() - s.ultimaTentativa < 20 * 60000)) return;
+    return coletar('ronda', String(slot).padStart(2, '0'));
+  }
   if (Date.now() - (await inicioNavegador()) < (c.espera ?? 3) * 60000) return;
   if (a.dia === hojeIso() && a.ultimaTentativa && Date.now() - a.ultimaTentativa < 20 * 60000) return;
   coletar('auto');
@@ -78,6 +94,17 @@ async function desdeDe(k, inicioAnterior) {
   const v = (ultimas || {})[k] || inicioAnterior || ontem.getTime();
   return Math.max(v, Date.now() - 7 * 864e5);
 }
+// Ronda: desde a última ronda que deu certo HOJE nessa fonte (ou desde a coleta inicial do dia)
+async function desdeRonda(k) {
+  const { ultimas, ultimasRonda } = await chrome.storage.local.get(['ultimas', 'ultimasRonda']);
+  const r = ultimasRonda && ultimasRonda.dia === hojeIso() ? ultimasRonda : {};
+  return Math.max(r[k] || 0, (ultimas || {})[k] || 0, Date.now() - 6 * 3600000);
+}
+async function marcarUltimaRonda(k, ms) {
+  const { ultimasRonda } = await chrome.storage.local.get('ultimasRonda');
+  const r = ultimasRonda && ultimasRonda.dia === hojeIso() ? ultimasRonda : { dia: hojeIso() };
+  await chrome.storage.local.set({ ultimasRonda: { ...r, [k]: ms } });
+}
 async function marcarUltima(k, ms) {
   const { ultimas } = await chrome.storage.local.get('ultimas');
   await chrome.storage.local.set({ ultimas: { ...(ultimas || {}), [k]: ms } });
@@ -101,15 +128,16 @@ function esperarCarregar(tabId, ms = 60000) {
 
 // Notificação do Windows com o progresso: uma só (mesmo id), recriada a cada mudança para aparecer de novo.
 const ICONE = { aguardando: '⏸️', coletando: '⏳', ok: '✅', erro: '❌' };
-async function avisarProgresso(c, origem, prog, fim) {
+async function avisarProgresso(c, origem, prog, fim, rodada) {
   if (c.avisos === false) return;
-  const turno = origem === 'noite' ? 'da noite' : origem === 'manual' ? 'manual' : 'da manhã';
+  if (origem === 'ronda' && !fim) return; // ronda: só um aviso discreto no fim
+  const turno = origem === 'noite' ? 'da noite' : origem === 'manual' ? 'manual' : origem === 'ronda' ? `ronda das ${Number(rodada)}h` : 'da manhã';
   const linhas = Object.entries(prog).map(([k, p]) => `${FONTES[k].nome} ${ICONE[p.estado]} ${p.estado === 'ok' ? `OK (${p.n} conversa${p.n === 1 ? '' : 's'})` : p.estado === 'erro' ? `erro: ${p.msg}` : p.estado}`);
   const titulo = fim
     ? `Retomazera: coleta ${turno} concluída${c.perfil ? ` · ${c.perfil}` : ''}`
     : `Retomazera: coletando ${turno}${c.perfil ? ` · ${c.perfil}` : ''}`;
   const opcoes = { type: 'basic', iconUrl: 'icon.png', title: titulo, message: linhas.join('\n').slice(0, 500),
-    priority: 1, silent: !fim, requireInteraction: false };
+    priority: origem === 'ronda' ? 0 : 1, silent: !fim || origem === 'ronda', requireInteraction: false };
   if (fim) opcoes.contextMessage = 'A análise roda no PC e o resumo chega no celular em alguns minutos.';
   try {
     await chrome.notifications.clear('rz-coleta');
@@ -117,8 +145,26 @@ async function avisarProgresso(c, origem, prog, fim) {
   } catch { /* sem permissão de notificação: segue sem aviso */ }
 }
 
+// Coleta em segundo plano: janela própria aberta SEM foco (não rouba a tela). Se o WhatsApp já estiver
+// aberto numa aba, ela é movida para essa janela durante a coleta e volta para o lugar depois.
+async function janelaDeFundo() {
+  return chrome.windows.create({ url: 'about:blank', focused: false, state: 'normal', width: 1280, height: 900 });
+}
+async function devolverAba(d) {
+  if (!d) return;
+  try {
+    const existe = await chrome.windows.get(d.windowId).catch(() => null);
+    if (existe) {
+      await chrome.tabs.move(d.tabId, { windowId: d.windowId, index: d.index });
+      if (d.active) await chrome.tabs.update(d.tabId, { active: true });
+    } else {
+      await chrome.windows.create({ tabId: d.tabId, focused: false });
+    }
+  } catch { /* aba fechada no meio: segue */ }
+}
+
 let rodando = false;
-async function coletar(origem) {
+async function coletar(origem, rodada = '') {
   if (rodando) return;
   rodando = true;
   // mantém a extensão acordada durante a coleta (o Chrome encerra o service worker parado por 30 s)
@@ -139,21 +185,21 @@ async function coletar(origem) {
       await estado({ atual: f.nome });
       prog[k] = { estado: 'coletando' };
       await avisarProgresso(c, origem, prog, false);
-      let tabId = null, abriuAqui = false;
+      let tabId = null, abriuAqui = false, devolver = null;
       try {
         // WhatsApp Web só funciona numa aba: reaproveita a que já estiver aberta
         const existentes = f.padrao ? await chrome.tabs.query({ url: f.padrao }) : [];
+        if (!janela) janela = await janelaDeFundo();
         if (existentes.length) {
-          tabId = existentes[0].id;
-          await chrome.tabs.update(tabId, { active: true });
-          await chrome.windows.update(existentes[0].windowId, { focused: true });
-        } else {
-          if (!janela) {
-            janela = await chrome.windows.create({ url: f.url, focused: true, width: 1280, height: 900 });
-            tabId = janela.tabs[0].id;
-          } else {
-            tabId = (await chrome.tabs.create({ windowId: janela.id, url: f.url, active: true })).id;
+          const t = existentes[0];
+          tabId = t.id;
+          if (t.windowId !== janela.id) {
+            devolver = { tabId: t.id, windowId: t.windowId, index: t.index, active: t.active };
+            await chrome.tabs.move(t.id, { windowId: janela.id, index: -1 });
           }
+          await chrome.tabs.update(tabId, { active: true });
+        } else {
+          tabId = (await chrome.tabs.create({ windowId: janela.id, url: f.url, active: true })).id;
           abriuAqui = true;
           await esperarCarregar(tabId);
         }
@@ -161,7 +207,7 @@ async function coletar(origem) {
         // noite: só as conversas de hoje (não mexe no ponto de partida da coleta da manhã)
         const [aa, mm, dd] = data.split('-').map(Number);
         const meiaNoite = new Date(aa, mm - 1, dd);
-        const desde = origem === 'noite' ? meiaNoite.getTime() : await desdeDe(k, inicioAnterior);
+        const desde = origem === 'noite' ? meiaNoite.getTime() : origem === 'ronda' ? await desdeRonda(k) : await desdeDe(k, inicioAnterior);
         const inicioFonte = Date.now();
         let r;
         if (k === 'whatsapp') {
@@ -185,18 +231,20 @@ async function coletar(origem) {
         }
         r = r || { erro: 'sem resposta do extrator', conversas: [] };
         delete r.feitos; delete r.restantes;
-        const corpo = { fonte: k, data, perfil: c.perfil, lote: ativas, turno: origem === 'noite' ? 'noite' : '', desde, ate: inicioFonte, coletadoEm: Date.now(), ...r };
+        const corpo = { fonte: k, data, perfil: c.perfil, lote: ativas, turno: origem === 'noite' ? 'noite' : origem === 'ronda' ? 'ronda' : '', rodada, desde, ate: inicioFonte, coletadoEm: Date.now(), ...r };
         const resp = await fetch(`${SERVIDOR}/api/coleta`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
         const j = await resp.json().catch(() => ({}));
         const n = (r.conversas || []).length;
         prog[k] = r.erro || !j.ok ? { estado: 'erro', msg: String(r.erro || j.erro || resp.status).slice(0, 60) } : { estado: 'ok', n };
         if (j.ok && !r.erro && origem === 'auto') { await marcarUltima(k, inicioFonte); algumaOk = true; }
         if (j.ok && !r.erro && origem === 'noite') algumaOk = true;
+        if (j.ok && !r.erro && origem === 'ronda') { await marcarUltimaRonda(k, inicioFonte); algumaOk = true; }
         await estado({ fontes: { ...((await chrome.storage.local.get('est')).est.fontes || {}), [k]: r.erro ? `erro: ${r.erro}` : (j.ok ? `${n} conversa(s)` : `servidor: ${j.erro || resp.status}`) } });
       } catch (e) {
         prog[k] = { estado: 'erro', msg: String(e.message || e).slice(0, 60) };
         await estado({ fontes: { ...((await chrome.storage.local.get('est')).est.fontes || {}), [k]: `erro: ${String(e.message || e).slice(0, 150)}` } });
       } finally {
+        await devolverAba(devolver);
         if (abriuAqui && tabId && janela && (await chrome.tabs.query({ windowId: janela.id })).length > 1) {
           await chrome.tabs.remove(tabId).catch(() => {});
         }
@@ -204,7 +252,15 @@ async function coletar(origem) {
     }
   } finally {
     if (janela) await chrome.windows.remove(janela.id).catch(() => {});
-    if (ativas.length) await avisarProgresso(c, origem, prog, true);
+    if (ativas.length) await avisarProgresso(c, origem, prog, true, rodada);
+    if (origem === 'ronda') {
+      const { autoRonda } = await chrome.storage.local.get('autoRonda');
+      const r = autoRonda && autoRonda.dia === data ? autoRonda : { dia: data, slots: {} };
+      const s = r.slots[Number(rodada)] || { tentativas: 0 };
+      r.slots[Number(rodada)] = { ok: s.ok || algumaOk, tentativas: (s.tentativas || 0) + 1, ultimaTentativa: Date.now() };
+      if (algumaOk) r.feitaEm = Date.now();
+      await chrome.storage.local.set({ autoRonda: r });
+    }
     if (origem === 'auto' || origem === 'noite') {
       const chave = origem === 'noite' ? 'autoNoite' : 'auto';
       const { [chave]: ant } = await chrome.storage.local.get(chave);
@@ -222,14 +278,18 @@ chrome.notifications.onClicked.addListener((id) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, _s, responder) => {
-  if (msg.tipo === 'coletar') { coletar(msg.turno === 'noite' ? 'noite' : 'manual'); responder({ ok: true }); }
+  if (msg.tipo === 'coletar') {
+    if (msg.turno === 'ronda') { const h = new Date().getHours(); coletar('ronda', String(RONDAS.filter((x) => x <= h).pop() ?? 8).padStart(2, '0')); }
+    else coletar(msg.turno === 'noite' ? 'noite' : 'manual');
+    responder({ ok: true });
+  }
   if (msg.tipo === 'salvar') {
     chrome.storage.local.set({ cfg: msg.cfg }).then(iniciar).then(() => responder({ ok: true }));
     return true;
   }
   if (msg.tipo === 'info') {
-    Promise.all([config(), chrome.storage.local.get(['est', 'auto', 'autoNoite'])])
-      .then(([cfg, { est, auto, autoNoite }]) => responder({ cfg, est: est || {}, auto: auto || {}, autoNoite: autoNoite || {}, hoje: hojeIso() }));
+    Promise.all([config(), chrome.storage.local.get(['est', 'auto', 'autoNoite', 'autoRonda'])])
+      .then(([cfg, { est, auto, autoNoite, autoRonda }]) => responder({ cfg, est: est || {}, auto: auto || {}, autoNoite: autoNoite || {}, autoRonda: autoRonda || {}, hoje: hojeIso() }));
     return true;
   }
   return false;

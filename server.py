@@ -633,23 +633,7 @@ def salvar_dia(corpo):
     itens = corpo.get("itens") or []
     if not isinstance(itens, list):
         raise ValueError("campo 'itens' deve ser uma lista")
-    limpos = []
-    for i, x in enumerate(itens):
-        if not isinstance(x, dict):
-            continue
-        limpos.append({
-            "id": str(x.get("id") or f"{data}-{i}"),
-            "nome": str(x.get("nome") or "")[:80],
-            "canal": str(x.get("canal") or "")[:20],
-            "contato": str(x.get("contato") or "")[:200],
-            "produto": str(x.get("produto") or "")[:80],
-            "prioridade": str(x.get("prioridade") or "media").lower()[:10],
-            "situacao": str(x.get("situacao") or "")[:400],
-            "motivo": str(x.get("motivo") or "")[:400],
-            "mensagem": str(x.get("mensagem") or "")[:600],
-            "ultimaMsg": str(x.get("ultimaMsg") or "")[:300],
-            "quando": str(x.get("quando") or "")[:20],
-        })
+    limpos = salvar_dia_itens(itens, data)
     agendadas = limpar_agendadas(corpo.get("agendadas") or [])
     registrar_retornos(corpo.get("retornos") or [], data)
     try:
@@ -663,6 +647,27 @@ def salvar_dia(corpo):
     with open(os.path.join(PASTA_DIAS, data + ".json"), "w", encoding="utf-8") as f:
         json.dump(dia, f, ensure_ascii=False, indent=1)
     return dia
+
+
+def salvar_dia_itens(itens, prefixo):
+    limpos = []
+    for i, x in enumerate(itens if isinstance(itens, list) else []):
+        if not isinstance(x, dict):
+            continue
+        limpos.append({
+            "id": str(x.get("id") or f"{prefixo}-{i}"),
+            "nome": str(x.get("nome") or "")[:80],
+            "canal": str(x.get("canal") or "")[:20],
+            "contato": str(x.get("contato") or "")[:200],
+            "produto": str(x.get("produto") or "")[:80],
+            "prioridade": str(x.get("prioridade") or "media").lower()[:10],
+            "situacao": str(x.get("situacao") or "")[:400],
+            "motivo": str(x.get("motivo") or "")[:400],
+            "mensagem": str(x.get("mensagem") or "")[:600],
+            "ultimaMsg": str(x.get("ultimaMsg") or "")[:300],
+            "quando": str(x.get("quando") or "")[:20],
+        })
+    return limpos
 
 
 def limpar_agendadas(lista):
@@ -685,13 +690,26 @@ def limpar_agendadas(lista):
 
 # --------------------------------------------------------------------------- coletas da extensão
 def pasta_coleta(data, turno=""):
-    return os.path.join(PASTA_COLETAS, data, "noite") if turno == "noite" else os.path.join(PASTA_COLETAS, data)
+    if turno == "noite":
+        return os.path.join(PASTA_COLETAS, data, "noite")
+    if turno.startswith("ronda:"):  # rondas de 2 em 2 h: coletas/<data>/rondas/<HH>
+        return os.path.join(PASTA_COLETAS, data, "rondas", turno.split(":", 1)[1])
+    return os.path.join(PASTA_COLETAS, data)
+
+
+def turno_de(corpo):
+    t = str(corpo.get("turno") or "")
+    if t == "noite":
+        return "noite"
+    if t == "ronda" and re.fullmatch(r"\d{2}", str(corpo.get("rodada") or "")):
+        return "ronda:" + str(corpo["rodada"])
+    return ""
 
 
 def salvar_coleta(corpo):
     """Grava coletas/AAAA-MM-DD[/noite]/<fonte>.json e refaz o conversas.txt (todas as fontes juntas, para o Claude ler)."""
     data, fonte = str(corpo.get("data") or ""), str(corpo.get("fonte") or "")
-    turno = "noite" if corpo.get("turno") == "noite" else ""
+    turno = turno_de(corpo)
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data) or fonte not in NOMES_FONTES:
         raise ValueError("data ou fonte inválida")
     pasta = pasta_coleta(data, turno)
@@ -721,7 +739,8 @@ def coletas_do_dia(data, turno=""):
 
 def gerar_texto(data, turno=""):
     """Texto compacto: cabeçalho por conversa e uma linha por mensagem (J = João, C = cliente)."""
-    linhas = [f"CONVERSAS DE {data}{' (NOITE)' if turno else ''} (J = João/loja, C = cliente)", ""]
+    rotulo = " (NOITE)" if turno == "noite" else f" (RONDA DAS {turno.split(':')[1]}H)" if turno else ""
+    linhas = [f"CONVERSAS DE {data}{rotulo} (J = João/loja, C = cliente)", ""]
     for fonte, c in coletas_do_dia(data, turno).items():
         quando = time.strftime("%d/%m %H:%M", time.localtime((c.get("coletadoEm") or 0) / 1000))
         convs = c.get("conversas") or []
@@ -760,27 +779,62 @@ def gerar_texto(data, turno=""):
 # --------------------------------------------------------------------------- análise pelo Claude Code
 ESPERA_FONTES_S = 20 * 60      # espera as outras fontes até 20 min depois da primeira
 ANALISE_TIMEOUT_S = 20 * 60
-_analise = {"rodando": False, "timer": None, "timer_noite": None, "lock": threading.Lock()}
+_analise = {"rodando": False, "timer": None, "timer_noite": None, "timer_ronda": None, "lock": threading.Lock()}
 
 
 def claude_exe():
     return shutil.which("claude") or os.path.expanduser(r"~\.local\bin\claude.exe")
 
 
-def chamar_claude(prompt, arquivo_log):
-    """Roda `claude -p` na pasta do Retomazera, só com leitura/gravação de arquivos e python."""
+def chamar_claude(prompt, arquivo_log, modelo=None):
+    """Roda `claude -p` na pasta do Retomazera, só com leitura/gravação de arquivos e python.
+    Grava no log a resposta e o uso de tokens (e soma em uso_claude.json, por dia)."""
     cmd = [claude_exe(), "-p", "--allowedTools", "Read", "Write", "Grep", "Glob", "Bash(python:*)", "Bash(python -X utf8:*)",
-           "--output-format", "text"]
+           "--output-format", "json"] + (["--model", modelo] if modelo else [])
     inicio = time.time()
     r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8", errors="replace",
                        cwd=BASE_DIR, timeout=ANALISE_TIMEOUT_S, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    texto, uso = r.stdout, ""
+    try:
+        j = json.loads(r.stdout)
+        texto = str(j.get("result") or "")
+        u = j.get("usage") or {}
+        uso = (f"modelo {modelo or 'padrão'} · {j.get('num_turns')} passos · tokens: novos {u.get('input_tokens', 0) + u.get('cache_creation_input_tokens', 0)}"
+               f", do cache {u.get('cache_read_input_tokens', 0)}, resposta {u.get('output_tokens', 0)}")
+        registrar_uso(os.path.basename(os.path.dirname(arquivo_log)) or "?", modelo or "padrão", u, time.time() - inicio)
+    except (ValueError, AttributeError):
+        pass
     os.makedirs(os.path.dirname(arquivo_log), exist_ok=True)
     with open(arquivo_log, "w", encoding="utf-8") as f:
-        f.write(f"código {r.returncode} em {time.time() - inicio:.0f} s\n\n--- saída ---\n{r.stdout}\n--- erros ---\n{r.stderr}")
+        f.write(f"código {r.returncode} em {time.time() - inicio:.0f} s\n{uso}\n\n--- saída ---\n{texto}\n--- erros ---\n{r.stderr}")
+    r.stdout = texto
     # login do Claude Code expirado: não adianta tentar de novo, o João precisa entrar de novo
     if r.returncode and re.search(r"authenticat|oauth|session expired|not logged|please run /login", (r.stdout or "") + (r.stderr or ""), re.I):
         raise RuntimeError("o login do Claude no PC expirou: abra o terminal, rode 'claude' e digite /login")
     return r
+
+
+USO_CLAUDE = os.path.join(BASE_DIR, "uso_claude.json")  # tokens por dia e por tipo de análise (fora do git)
+
+
+def registrar_uso(tipo, modelo, u, segundos):
+    try:
+        with _lock:
+            try:
+                with open(USO_CLAUDE, encoding="utf-8") as f:
+                    reg = json.load(f)
+            except (OSError, ValueError):
+                reg = {}
+            dia = reg.setdefault(time.strftime("%Y-%m-%d"), [])
+            dia.append({"hora": time.strftime("%H:%M"), "tipo": tipo, "modelo": modelo, "segundos": round(segundos),
+                        "novos": (u.get("input_tokens") or 0) + (u.get("cache_creation_input_tokens") or 0),
+                        "cache": u.get("cache_read_input_tokens") or 0, "resposta": u.get("output_tokens") or 0})
+            limite = (date.today() - timedelta(days=60)).isoformat()
+            reg = {k: v for k, v in reg.items() if k >= limite}
+            with open(USO_CLAUDE, "w", encoding="utf-8") as f:
+                json.dump(reg, f, ensure_ascii=False, indent=1)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[uso] {exc}")
 
 
 def fontes_esperadas():
@@ -808,11 +862,13 @@ def agendar_analise(data, turno=""):
     completas = all(f in coletas for f in fontes_esperadas())
     primeira = min((c.get("coletadoEm") or 0) for c in coletas.values()) / 1000
     atraso = 30 if completas else max(30, ESPERA_FONTES_S - (time.time() - primeira))
-    chave_timer = "timer_noite" if turno == "noite" else "timer"
+    chave_timer = "timer_noite" if turno == "noite" else "timer_ronda" if turno.startswith("ronda:") else "timer"
+    funcao, args = (analisar_noite, (data,)) if turno == "noite" else \
+        (analisar_ronda, (data, turno.split(":")[1])) if turno.startswith("ronda:") else (analisar, (data,))
     with _analise["lock"]:
         if _analise[chave_timer]:
             _analise[chave_timer].cancel()
-        t = threading.Timer(atraso, analisar_noite if turno == "noite" else analisar, args=(data,))
+        t = threading.Timer(atraso, funcao, args=args)
         t.daemon = True
         _analise[chave_timer] = t
         t.start()
@@ -865,6 +921,102 @@ def analisar(data, notificar=True, forcar=False):
                 analisar_semana()
         except Exception as exc:  # noqa: BLE001
             print(f"[semana] {exc}")
+
+
+MODELO_RONDA = "sonnet"
+
+
+def analisar_ronda(data, rodada, notificar=True, forcar=False):
+    """Ronda de 2 em 2 h: só as conversas novas desde a coleta anterior. O Claude (Sonnet) devolve só o que MUDOU
+    na lista do dia (novos/atualizados/remover, vendas, fila, retornos); o servidor junta em dias/<data>.json."""
+    turno = "ronda:" + rodada
+    pasta = pasta_coleta(data, turno)
+    saida = os.path.join(pasta, "resultado.json")
+    with _analise["lock"]:
+        if _analise["rodando"]:
+            print(f"[ronda {rodada}h] já tem uma análise rodando; tento de novo em 2 min")
+            t = threading.Timer(120, analisar_ronda, args=(data, rodada, notificar, forcar)); t.daemon = True; t.start()
+            return False
+        coletas = coletas_do_dia(data, turno)
+        ultima = max([c.get("coletadoEm") or 0 for c in coletas.values()] or [0])
+        if not coletas or (not forcar and os.path.exists(saida) and os.path.getmtime(saida) * 1000 >= ultima):
+            return False
+        _analise["rodando"] = True
+    try:
+        n_conv = sum(len(c.get("conversas") or []) for c in coletas.values())
+        if not n_conv:  # nada novo: nem chama o Claude
+            print(f"[ronda {rodada}h] {data}: nenhuma conversa nova — sem análise")
+            with open(saida, "w", encoding="utf-8") as f:
+                json.dump({"vazia": True}, f)
+            return True
+        with open(os.path.join(BASE_DIR, "ronda_prompt.md"), encoding="utf-8") as f:
+            prompt = f.read().replace("{DATA}", data).replace("{RODADA}", rodada)
+        print(f"[ronda {rodada}h] {data}: {n_conv} conversa(s) nova(s); chamando o Claude ({MODELO_RONDA})…")
+        inicio = time.time()
+        r = chamar_claude(prompt, os.path.join(pasta, "analise.log"), modelo=MODELO_RONDA)
+        if not os.path.exists(saida):
+            raise RuntimeError(f"o Claude não gravou resultado.json (código {r.returncode}; veja coletas/{data}/rondas/{rodada}/analise.log)")
+        with open(saida, encoding="utf-8") as f:
+            corpo = json.load(f)
+        dia, mudou = juntar_ronda(data, rodada, corpo)
+        try:
+            publicar_gist()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[gist] publicar: {exc}")
+        enviados = 0
+        if notificar and corpo.get("avisar") and mudou:
+            enviados = enviar_push({"title": f"🔄 {rodada}h: {str(corpo.get('titulo') or 'novidades na lista')[:80]}",
+                                    "body": str(corpo.get("resumo") or "")[:220], "tag": f"retomazera-ronda-{data}", "data": data})
+        print(f"[ronda {rodada}h] {data}: {mudou} mudança(s), push={enviados}, {time.time() - inicio:.0f} s")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ronda {rodada}h] {data}: FALHOU — {exc}")
+        return False  # ronda falhando não incomoda no celular: a próxima (ou a da noite) cobre
+    finally:
+        _analise["rodando"] = False
+
+
+def juntar_ronda(data, rodada, corpo):
+    """Aplica as mudanças da ronda na lista do dia. Item novo/atualizado ganha 'listaEm' (agora), para que um
+    'Já chamei' de antes não esconda o cliente que voltou a precisar de atenção."""
+    arq = os.path.join(PASTA_DIAS, data + ".json")
+    try:
+        with open(arq, encoding="utf-8") as f:
+            dia = json.load(f)
+    except (OSError, ValueError):
+        dia = {"data": data, "geradoEm": int(time.time() * 1000), "resumo": "", "fontes": {}, "itens": [], "agendadas": []}
+    agora = int(time.time() * 1000)
+    mudou = 0
+    por_chave = {chave_cliente(x): x for x in dia.get("itens") or []}
+    for x in corpo.get("remover") or []:
+        if isinstance(x, dict) and por_chave.pop(chave_cliente(x), None) is not None:
+            mudou += 1
+    novos = salvar_dia_itens(corpo.get("itens") or [], f"{data}-r{rodada}")
+    for x in novos:
+        x.update({"listaEm": agora, "ronda": rodada + "h"})
+        por_chave[chave_cliente(x)] = x
+        mudou += 1
+    dia["itens"] = list(por_chave.values())
+    ag = {chave_cliente(a): a for a in dia.get("agendadas") or []}
+    for a in corpo.get("cancelar_agendadas") or []:
+        if isinstance(a, dict) and ag.pop(chave_cliente(a), None) is not None:
+            mudou += 1
+    for a in limpar_agendadas(corpo.get("agendadas") or []):
+        ag[chave_cliente(a)] = a
+        mudou += 1
+    dia["agendadas"] = list(ag.values())
+    if corpo.get("resumo"):
+        dia.setdefault("rondas", []).append({"hora": rodada + "h", "resumo": str(corpo["resumo"])[:600], "em": agora})
+        dia["rondas"] = dia["rondas"][-8:]
+    registrar_retornos(corpo.get("retornos") or [], data)
+    try:
+        registrar_espera(corpo.get("espera") or [], data)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[espera] {exc}")
+    os.makedirs(PASTA_DIAS, exist_ok=True)
+    with open(arq, "w", encoding="utf-8") as f:
+        json.dump(dia, f, ensure_ascii=False, indent=1)
+    return dia, mudou
 
 
 def payload_noite(n):
@@ -1130,7 +1282,7 @@ class Handler(SimpleHTTPRequestHandler):
             except (ValueError, OSError) as exc:
                 return self._json({"ok": False, "erro": str(exc)}, 400)
             print(f"[coleta] {corpo.get('data')} {corpo.get('fonte')}: {n} conversa(s)" + (f" — ERRO {corpo['erro']}" if corpo.get("erro") else ""))
-            agendar_analise(corpo["data"], "noite" if corpo.get("turno") == "noite" else "")
+            agendar_analise(corpo["data"], turno_de(corpo))
             return self._json({"ok": True, "conversas": n})
         if path == "/api/acoes":
             novas = {k: v for k, v in corpo.items() if isinstance(v, dict)}

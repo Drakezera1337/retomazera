@@ -96,3 +96,6 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 .ordem-fila { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 12px 0 4px; font-size: 14px; }
 .ordem-fila span { display: flex; gap: 6px; }
 .ordem-fila button:disabled { opacity: .35; }
+.chip.ronda { background: #e3f1ff; color: #0b5cad; }
+@media (prefers-color-scheme: dark) { .chip.ronda { background: #12324f; color: #9cd0ff; } }
+.painel.rondas p { margin: 0 0 6px; font-size: 14px; } .painel.rondas p:last-child { margin: 0; }

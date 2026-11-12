@@ -496,6 +496,7 @@ function cartao(x) {
   return `<div class="item ${p} ${a.chamado ? 'feito' : ''} ${a.vendido ? 'vendido' : ''} ${a.excluido ? 'excluido' : ''}">
     <div class="item-topo">
       <span class="item-nome">${a.fixado ? '📌 ' : ''}${esc(x.nome || 'Cliente')}${fone ? ` <span class="item-fone">${esc(fone)}</span>` : ''}</span>
+      ${x.ronda ? `<span class="chip ronda" title="Novo ou atualizado na ronda das ${esc(x.ronda)}">🔄 ${esc(x.ronda)}</span>` : ''}
       ${a.jaComprou ? '<span class="chip vend" title="Já comprou de você antes">⭐ Já comprou</span>' : ''}
       <span class="chip ${cls}">${esc(nomeCanal)}</span>
       ${a.vendido ? '<span class="chip vend">Vendido</span>' : `<span class="chip ${p}">${esc(PRIOR[p] || p)}</span>`}
@@ -529,13 +530,14 @@ function telaDia(dia, titulo) {
       : 'Ainda não há lista. Ela chega todo dia uns minutos depois que o PC é ligado.'}
       ${S.erro ? `<br><br>⚠️ ${esc(S.erro)}` : ''}</div>`;
   }
-  const todos = (dia.itens || []).map((x) => ({ ...x, _listaEm: dia.geradoEm }));
+  // item novo/atualizado numa ronda vale a partir da hora da ronda (um "Já chamei" de antes não esconde)
+  const todos = (dia.itens || []).map((x) => ({ ...x, _listaEm: x.listaEm || dia.geradoEm }));
   const excluidos = todos.filter((x) => acaoDe(x).excluido);
   const itens = todos.filter((x) => !acaoDe(x).excluido);
   // fixados primeiro, vendidos no fim; dentro disso, por prioridade
   const ordem = { alta: 0, media: 1, média: 1, baixa: 2 };
   const peso = (x) => { const a = acaoDe(x); return (a.fixado ? 0 : 10) + (a.vendido ? 100 : 0) + (ordem[x.prioridade] ?? 3); };
-  itens.sort((a, b) => peso(a) - peso(b));
+  itens.sort((a, b) => peso(a) - peso(b) || (b.listaEm || 0) - (a.listaEm || 0));
   const pendentes = itens.filter((x) => { const a = acaoDe(x); return !a.chamado && !a.vendido; }).length;
   // fixados de dias anteriores que não estão na lista deste dia
   const chavesDoDia = new Set(todos.map(chaveCliente));
@@ -548,6 +550,7 @@ function telaDia(dia, titulo) {
   return `<h1>${esc(titulo)}</h1>
     <p class="sub">Lista de ${esc(dataBR(dia.data))} (conversas das últimas ~24 h) · gerada ${esc(ago(dia.geradoEm))}</p>
     ${dia.resumo ? `<div class="painel resumo">${esc(dia.resumo)}</div>` : ''}
+    ${(dia.rondas || []).length ? `<div class="painel rondas">${dia.rondas.slice().reverse().map((r) => `<p><b>🔄 ${esc(r.hora)}</b> ${esc(r.resumo)}</p>`).join('')}</div>` : ''}
     <div class="contagem">
       <span class="chip">${itens.length} para chamar · ${pendentes} pendente(s)</span>
       ${Object.entries(porCanal).map(([c, n]) => { const [cls, nm] = CANAIS[c] || ['', c]; return `<span class="chip ${cls}">${esc(nm)} ${n}</span>`; }).join('')}

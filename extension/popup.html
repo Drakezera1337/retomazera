@@ -27,10 +27,12 @@
   <label>Coletar a partir das (hora) <input type="number" id="horaMin" min="0" max="23" style="width:60px"></label>
   <label>Esperar depois de ligar o PC (min) <input type="number" id="espera" min="1" max="30" style="width:60px"></label>
   <div class="sub">A coleta automática roda 1x por dia, na primeira vez que o PC estiver ligado depois desse horário.</div>
+  <label><input type="checkbox" id="ronda"> Rondas de 2 em 2 h (8h às 22h): só o que é novo, em segundo plano</label>
   <label><input type="checkbox" id="noite"> Coleta da noite (preparar as vendas de amanhã) a partir das
     <input type="number" id="horaNoite" min="15" max="23" style="width:50px"> h</label>
   <button class="verde" id="salvar">Salvar</button>
   <button id="agora">Coletar agora</button>
+  <button id="agoraRonda">🔄 Ronda agora</button>
   <button id="agoraNoite">🌙 Coletar noite agora</button>
   <div id="est" class="sub"></div>
   <script src="popup.js"></script>
