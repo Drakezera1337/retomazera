@@ -130,6 +130,8 @@ function salvarAcoes(novas) {
 // ---------------------------------------------------------------- vendas marcadas
 // A análise do Claude acha nas conversas as vendas combinadas para um dia ("agendadas").
 // Junta as de todas as listas (a lista mais nova vale, se o cliente remarcou) e mostra as de hoje.
+// atalho para outra aba (fila, vendas, retornos): botão largo e legível no tema escuro
+const atalho = (href, icone, titulo, sub) => `<a class="atalho" href="${href}"><span class="atalho-ic">${icone}</span><span class="atalho-txt"><b>${esc(titulo)}</b><small>${esc(sub)}</small></span><span class="atalho-seta">›</span></a>`;
 function hojeIso() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -250,7 +252,7 @@ function blocoRetornos(chavesDoDia) {
   const futuros = S.retornos.filter((r) => r.data > hoje && !acaoDe(r).excluido);
   if (!devidos.length && !futuros.length) return '';
   return `${devidos.length ? `<h2 style="margin:4px 0 8px">📅 Combinado de chamar hoje (${devidos.length})</h2>${devidos.map(cartao).join('')}` : ''}
-    ${futuros.length ? `<p class="sub"><a href="#/retornos">📅 ${futuros.length} retorno(s) combinado(s) para os próximos dias — ver</a></p>` : ''}`;
+    ${futuros.length ? atalho('#/retornos', '📅', `${futuros.length} ${futuros.length === 1 ? 'retorno combinado' : 'retornos combinados'}`, 'para os próximos dias') : ''}`;
 }
 // ---------------------------------------------------------------- fila de espera ("quando chegar eu te aviso")
 function cardEspera(e, chegou, unidade = '') {
@@ -274,7 +276,7 @@ function blocoChegou() {
   const fila = esperaAtiva().length;
   if (!chegou.length && !fila) return '';
   return `${chegou.length ? `<h2 style="margin:4px 0 8px">🔔 Chegou o que estavam esperando (${chegou.length})</h2>${chegou.map((e) => cardEspera(e, true)).join('')}` : ''}
-    ${fila ? `<p class="sub"><a href="#/espera">⏳ ${fila} cliente(s) na fila de espera — ver</a></p>` : ''}`;
+    ${fila ? atalho('#/espera', '⏳', `${fila} ${fila === 1 ? 'cliente' : 'clientes'} na fila de espera`, 'esperando chegar o videogame') : ''}`;
 }
 // unidades da Gestão (disponíveis e chegando) do modelo, com foto, custo e para quem cada uma vai.
 // A divisão é refeita aqui (e não só no PC) para o "Desvincular" valer na hora: o primeiro da fila pega a
@@ -468,7 +470,7 @@ function telaVendas() {
 function linkVendasHoje() {
   const hoje = hojeIso();
   const n = vendasMarcadas().filter((v) => v.data === hoje && !(S.acoes[v._chave] || {}).cancelada && !(S.acoes[v._chave] || {}).concluida).length;
-  return n ? `<p class="sub"><a href="#/vendas">💰 ${n} venda(s) marcada(s) para hoje — ver</a></p>` : '';
+  return n ? atalho('#/vendas', '💰', `${n} ${n === 1 ? 'venda marcada' : 'vendas marcadas'} para hoje`, 'ver o videogame e o combinado') : '';
 }
 function blocoVendas(naAba) {
   const hoje = hojeIso();
