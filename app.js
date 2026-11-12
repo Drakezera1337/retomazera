@@ -317,7 +317,8 @@ function abrirFormVenda(chaveVenda) {
   const v = S.cards[chaveVenda];
   if (!v) return;
   const ant = (S.acoes[chaveVenda] || {}).gestao; // reabrindo depois de um erro: começa do que foi enviado
-  const itens = ant?.itens?.length
+  // "Corrigir" (venda ainda concluída) refaz os itens do envio; depois de desfazer, vale o videogame escolhido agora
+  const itens = ant?.itens?.length && (S.acoes[chaveVenda] || {}).concluida
     ? ant.itens.map((a) => ({ it: { descricao: a.descricao || '', valor: a.preco_venda },
       u: S.estoque.find((x) => x.uid === a.uid) || { uid: a.uid, nome: a.nome, custo: a.custo, familia: a.familia || '' } }))
     : itensParaGestao(v);
