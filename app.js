@@ -327,7 +327,10 @@ function alocarFila() {
   // quando a Gestão mudar para "Aguardando venda", ele vai para o primeiro da fila naquele momento.
   const reservadas = alocarVendas().porUid;
   const porUid = {}, porChave = {}, fixos = new Set(), previsao = new Set();
-  const fila = filaOrdenada();
+  // quem já tem um videogame do modelo reservado numa venda marcada não pega outro da fila
+  const comVenda = new Set(vendasMarcadas().filter((v) => { const a = S.acoes[v._chave] || {}; return !a.cancelada && !a.concluida; })
+    .flatMap((v) => itensConsoleVenda(v).map(({ chave }) => `${chaveCliente(v)}|${S.estoque.find((u) => (u.atende || []).includes(chave))?.familia}`)));
+  const fila = filaOrdenada().filter((e) => !comVenda.has(`${chaveCliente(e)}|${e.familia}`));
   const serve = (x, e) => !reservadas[x.uid] && (x.atende ? x.atende.includes(e.chave) : x.para === e.chave);
   const fora = (e) => S.acoes[chaveCliente(e)]?.semUnidade || [];
   const dar = (e, u) => { porUid[u.uid] = e; porChave[e.chave] = u; };
@@ -351,7 +354,7 @@ function alocarFila() {
     const u = S.estoque.find((x) => x.situacao !== 'disponivel' && !porUid[x.uid] && serve(x, e));
     if (u) { dar(e, u); previsao.add(u.uid); }
   }
-  return { porUid, porChave, fixos, reservadas, previsao };
+  return { porUid, porChave, fixos, reservadas, previsao, comVenda };
 }
 // modo: 'desvincular' | 'desfazer' (tira o desvínculo) | 'manual' (liga esta unidade a este cliente)
 function vincular(chaveEspera, uid, modo) {
@@ -402,7 +405,7 @@ function telaEspera() {
     const disp = us.filter((u) => u.situacao === 'disponivel').length;
     return `<details class="estoque" open><summary>📦 Estoque na Gestão: ${disp} disponível(is) · ${us.length - disp} chegando</summary>${us.map((u) => unidadeEstoque(u, aloc)).join('')}</details>`;
   };
-  const vaiUsar = (e) => { const u = aloc.porChave[e.chave]; return !u ? '' : u.situacao === 'disponivel' ? `✅ Vai usar: ${u.nome || u.item} (custo ${brlV(u.custo)})` : `🔮 Previsto (chegando): ${u.nome || u.item} (custo ${brlV(u.custo)})`; };
+  const vaiUsar = (e) => { const u = aloc.porChave[e.chave]; if (aloc.comVenda.has(`${chaveCliente(e)}|${e.familia}`)) return '💰 Já tem venda marcada desse modelo (sai da fila quando concluir)'; return !u ? '' : u.situacao === 'disponivel' ? `✅ Vai usar: ${u.nome || u.item} (custo ${brlV(u.custo)})` : `🔮 Previsto (chegando): ${u.nome || u.item} (custo ${brlV(u.custo)})`; };
   return `<h1>⏳ Fila de espera</h1><p class="sub">Clientes esperando um modelo sem estoque. Quando a Gestão tiver o item em "Aguardando venda", você recebe a notificação e eles aparecem na aba Hoje. Videogame disponível vai para o primeiro da fila que ele atende; o que está chegando só mostra a previsão e vai para quem for o primeiro quando chegar — use ▲ ▼ para mudar a prioridade.</p>
     ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<h2 style="margin:14px 0 8px">${esc(f)} (${l.length})${l.some((e) => e.chegou) ? ' · 🔔 tem no estoque' : ''}</h2>${blocoEstoque(f)}${filaOrdenada(l).map((e, i, arr) => `<div class="ordem-fila"><b>${i + 1}º da fila</b><span><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="-1" ${i ? '' : 'disabled'}>▲ Subir</button><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="1" ${i < arr.length - 1 ? '' : 'disabled'}>▼ Descer</button></span></div>${cardEspera(e, Boolean(e.chegou), vaiUsar(e))}`).join('')}`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
 }

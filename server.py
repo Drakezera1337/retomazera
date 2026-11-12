@@ -498,7 +498,10 @@ def alocar_disponiveis(reg, unidades, acoes):
         cand = [u for u in disp if u["uid"] not in reservadas and k in (u.get("atende") or [])]
         if cand:
             reservadas.add(cand[0]["uid"])
-    ativos = [(k, e) for k, e in reg.items() if not cliente_fora_da_fila(acoes, k, e)]
+    # quem tem venda marcada do modelo (videogame reservado) não pega outro da fila
+    com_venda = {k[len("venda:"):].rsplit(":", 1)[0] + "|" + u["familia"]
+                 for u in unidades for k in u.get("atende") or [] if k.startswith("venda:")}
+    ativos = [(k, e) for k, e in reg.items() if not cliente_fora_da_fila(acoes, k, e) and k not in com_venda]
     def pos(item):
         k, e = item
         lista = acoes.get("ordem:" + (e.get("familia") or ""), {}).get("lista") or []
