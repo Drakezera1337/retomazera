@@ -42,6 +42,10 @@ PASTA_SEMANAS = os.path.join(BASE_DIR, "semanas")     # resumos semanais (fora d
 PASTA_NOITES = os.path.join(BASE_DIR, "noites")       # análises da noite: preparar as vendas de amanhã (fora do git)
 ESPERA = os.path.join(BASE_DIR, "espera.json")        # fila de espera: cliente aguardando um modelo sem estoque (fora do git)
 GESTAO_DB = "file:D:/Loja/Programa/Gestao/dist/GestaoVendas/gestao_vendas.db?mode=ro"
+GESTAO_DB_RW = r"D:\Loja\Programa\Gestao\dist\GestaoVendas\gestao_vendas.db"  # só para lançar a venda (botão Vendido)
+LANCADAS = os.path.join(BASE_DIR, "gestao_lancadas.json")  # vendas que o Retomazera lançou na Gestão (fora do git)
+ORIGENS_GESTAO = ["OlxPay", "OLX", "Facebook", "Tráfego pago", "Marketplace (grátis)", "Instagram / WhatsApp",
+                  "Indicação", "Cliente antigo", "Troca", "Outro"]  # igual ao ORIGENS do gestao_vendas.py
 RETORNOS = os.path.join(BASE_DIR, "retornos.json")    # "me chama mês que vem": guardado sem prazo (fora do git)
 ACOES = os.path.join(BASE_DIR, "acoes.json")          # Fixar/Já chamei/Vendido/Excluir por cliente (fora do git; cópia no Gist)
 NOMES_FONTES = {"whatsapp": "WhatsApp", "facebook": "Facebook", "olx": "OLX", "instagram": "Instagram"}
@@ -717,6 +721,193 @@ def gravar_acoes(novas):
     return tudo
 
 
+# --------------------------------------------------------------------------- lançar a venda na Gestão
+# O app manda, junto com o "✅ Vendido" (acoes[venda:...].gestao), os mesmos campos do formulário de venda
+# da Gestão: preço, data, comprador, origem, formas de pagamento com valor e recebedor, parcelas do fiado.
+# Aqui isso vira o UPDATE no produto (a unidade da venda) — os gatilhos da Gestão marcam atualizado_em,
+# então o programa do PC recarrega sozinho e o celular da Gestão recebe pela sincronização.
+CAMPOS_VENDA = ["preco_venda", "data_venda", "nome_comprador", "tel_comprador", "origem_venda",
+                "pag_cartao", "pag_pix", "pag_dinheiro", "pag_fiado", "val_cartao", "val_pix", "val_dinheiro", "val_fiado",
+                "rec_cartao_tipo", "rec_cartao_nome", "rec_pix_tipo", "rec_pix_nome", "rec_fiado_tipo", "rec_fiado_nome"]
+
+
+def ler_lancadas():
+    try:
+        with open(LANCADAS, encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def gravar_lancadas(d):
+    tmp = LANCADAS + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, LANCADAS)
+
+
+def lancadas_publicas():
+    return {k: {"ok": bool(v.get("ok")), "em": v.get("em"), "erro": v.get("erro") or "",
+                "itens": [i.get("nome") or "" for i in v.get("itens") or []]} for k, v in ler_lancadas().items()}
+
+
+def opcoes_gestao():
+    """Opções do formulário de venda: origens e os recebedores já usados em cada forma (mais usados primeiro)."""
+    rec = {}
+    try:
+        c = sqlite3.connect(GESTAO_DB, uri=True, timeout=10)
+        for k in ("cartao", "pix", "fiado"):
+            rec[k] = [{"tipo": t, "nome": n} for t, n, _ in c.execute(
+                f"select rec_{k}_tipo, trim(rec_{k}_nome), count(*) from produtos where pag_{k}=1 and coalesce(rec_{k}_tipo,'')!='' "
+                f"group by 1, 2 order by 3 desc, max(data_venda) desc limit 6")]
+        c.close()
+    except sqlite3.Error as exc:
+        print(f"[gestão] opções: {exc}")
+    return {"origens": ORIGENS_GESTAO, "recebedores": rec}
+
+
+def _num(v):
+    try:
+        return round(float(str(v).replace(",", ".")), 2) if v not in (None, "") else 0.0
+    except ValueError:
+        return 0.0
+
+
+def _campos_do_item(it):
+    """Payload do app → colunas da Gestão (mesmas regras do _salvar do FormProduto). Erro → ValueError."""
+    pv = _num(it.get("preco_venda"))
+    dv = str(it.get("data_venda") or "")
+    if pv <= 0:
+        raise ValueError("preço de venda vazio")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", dv):
+        raise ValueError("data da venda inválida")
+    pag, val, rec = it.get("pag") or {}, it.get("val") or {}, it.get("rec") or {}
+    d = {"preco_venda": pv, "data_venda": dv,
+         "nome_comprador": str(it.get("nome_comprador") or "").strip()[:120],
+         "tel_comprador": str(it.get("tel_comprador") or "").strip()[:40],
+         "origem_venda": it.get("origem_venda") if it.get("origem_venda") in ORIGENS_GESTAO else ""}
+    if not any(pag.get(k) for k in ("cartao", "pix", "dinheiro", "fiado")):
+        raise ValueError("marque a forma de pagamento")
+    for k in ("cartao", "pix", "dinheiro", "fiado"):
+        d[f"pag_{k}"] = 1 if pag.get(k) else 0
+        d[f"val_{k}"] = _num(val.get(k)) if pag.get(k) else 0.0
+    for k in ("cartao", "pix", "fiado"):
+        r = rec.get(k) or {}
+        tipo = r.get("tipo") if pag.get(k) and r.get("tipo") in ("CPF", "CNPJ", "Dinheiro") else ""
+        if pag.get(k) and not tipo:
+            raise ValueError(f"escolha quem recebeu o {'cartão' if k == 'cartao' else k}")
+        d[f"rec_{k}_tipo"] = tipo
+        d[f"rec_{k}_nome"] = str(r.get("nome") or "").strip()[:60] if tipo and tipo != "Dinheiro" else ""
+    parcelas = []
+    if pag.get("fiado"):
+        for i, p in enumerate(it.get("parcelas") or [], start=1):
+            venc, v = str(p.get("venc") or ""), _num(p.get("valor"))
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", venc):
+                raise ValueError(f"data da {i}ª parcela do fiado inválida")
+            if v <= 0:
+                raise ValueError(f"valor da {i}ª parcela do fiado vazio")
+            parcelas.append((venc, v))
+        if not parcelas:
+            raise ValueError("adicione as parcelas do fiado")
+        soma = round(sum(v for _, v in parcelas), 2)
+        if not d["val_fiado"]:
+            d["val_fiado"] = soma
+        elif abs(soma - d["val_fiado"]) > 0.01:
+            raise ValueError(f"soma das parcelas ({soma:.2f}) diferente do valor do fiado ({d['val_fiado']:.2f})")
+        parcelas.sort()
+    return d, parcelas
+
+
+def _lancar(con, g):
+    """Grava a venda (uma unidade por item) numa transação. Devolve a entrada de gestao_lancadas."""
+    itens, antes = [], {}
+    for it in g.get("itens") or []:
+        uid = str(it.get("uid") or "")
+        row = con.execute("select id, nome, " + ", ".join(CAMPOS_VENDA) + " from produtos where uid=?", (uid,)).fetchone()
+        if not row:
+            raise ValueError("produto não encontrado na Gestão (foi apagado?)")
+        atual = dict(zip(CAMPOS_VENDA, row[2:]))
+        if atual["data_venda"] or "":
+            raise ValueError(f"{row[1][:50]} já está vendido na Gestão ({atual['data_venda']})")
+        d, parcelas = _campos_do_item(it)
+        antes[uid] = atual
+        con.execute("update produtos set " + ", ".join(f"{c}=:{c}" for c in CAMPOS_VENDA) + " where id=:id", {**d, "id": row[0]})
+        con.execute("delete from parcelas_fiado where produto_id=?", (row[0],))
+        for n, (venc, v) in enumerate(parcelas, start=1):
+            con.execute("insert into parcelas_fiado (produto_id, numero, valor, vencimento) values (?,?,?,?)", (row[0], n, v, venc))
+        itens.append({"uid": uid, "nome": row[1], "preco_venda": d["preco_venda"], "data_venda": d["data_venda"]})
+    if not itens:
+        raise ValueError("nenhum videogame da Gestão nessa venda")
+    return {"ok": True, "ts": g.get("ts"), "tentou": g.get("ts"), "em": int(time.time() * 1000), "itens": itens, "antes": antes}
+
+
+def _desfazer(con, reg):
+    """Venda desmarcada no app: volta o produto como estava — só se ninguém mexeu na venda pela Gestão."""
+    for it in reg.get("itens") or []:
+        row = con.execute("select id, preco_venda, data_venda from produtos where uid=?", (it["uid"],)).fetchone()
+        if not row:
+            continue
+        if (row[2] or "") != it["data_venda"] or abs(float(row[1] or 0) - float(it["preco_venda"])) > 0.01:
+            raise ValueError(f"{it['nome'][:50]} foi alterado na Gestão depois — desfaça por lá")
+        a = (reg.get("antes") or {}).get(it["uid"]) or {}
+        vazio = {c: (0 if c.startswith(("pag_", "val_", "preco_")) else "") for c in CAMPOS_VENDA}
+        con.execute("update produtos set " + ", ".join(f"{c}=:{c}" for c in CAMPOS_VENDA) + " where id=:id",
+                    {**vazio, **{k: v for k, v in a.items() if k in CAMPOS_VENDA}, "id": row[0]})
+        con.execute("delete from parcelas_fiado where produto_id=?", (row[0],))
+
+
+_lock_gestao = threading.Lock()
+
+
+def lancar_vendas_gestao(acoes):
+    """Aplica na Gestão as vendas concluídas com formulário (e desfaz as desmarcadas). Idempotente:
+    cada formulário tem um ts; o que já foi lançado com esse ts não é gravado de novo."""
+    mudou = False
+    with _lock_gestao:
+        reg = ler_lancadas()
+        for k, a in acoes.items():
+            if not k.startswith("venda:") or not isinstance(a, dict):
+                continue
+            g, feito = a.get("gestao"), reg.get(k)
+            quer = bool(a.get("concluida")) and isinstance(g, dict) and g.get("itens")
+            if quer and feito and feito.get("tentou") == g.get("ts"):
+                continue  # esse formulário já foi lançado (ou já deu erro — só tenta de novo se ele for reenviado)
+            if not quer and feito and feito.get("naoDesfez"):
+                continue  # já avisei que não dá para desfazer automaticamente
+            if not quer and not (feito and feito.get("ok")):
+                if feito and not feito.get("ok"):
+                    reg.pop(k, None); mudou = True
+                continue
+            con = sqlite3.connect(GESTAO_DB_RW, timeout=15)
+            try:
+                with con:
+                    if quer:
+                        if feito and feito.get("ok") and not feito.get("naoDesfez"):
+                            _desfazer(con, feito)  # formulário editado: refaz com os dados novos
+                        reg[k] = _lancar(con, g)
+                        print(f"[gestão] venda lançada: {', '.join(i['nome'][:40] for i in reg[k]['itens'])}")
+                    else:
+                        _desfazer(con, feito)
+                        reg.pop(k, None)
+                        print(f"[gestão] venda desfeita: {k}")
+            except (ValueError, sqlite3.Error) as exc:
+                print(f"[gestão] {k}: {exc}")
+                if quer:  # a transação voltou atrás: se já tinha um lançamento, ele continua valendo
+                    base = feito if feito and feito.get("ok") else {"ok": False}
+                    reg[k] = {**base, "erro": str(exc)[:200], "tentou": g.get("ts"), "em": int(time.time() * 1000)}
+                else:
+                    reg[k] = {**feito, "erro": f"não desfiz: {exc}"[:200], "naoDesfez": True}
+            finally:
+                con.close()
+            mudou = True
+        if mudou:
+            gravar_lancadas(reg)
+    if mudou:
+        threading.Thread(target=publicar_gist, daemon=True).start()
+    return mudou
+
+
 # --------------------------------------------------------------------------- Gist
 def gist_cfg():
     d = ler_dados()
@@ -793,7 +984,7 @@ def publicar_gist():
 def _publicar_gist():
     corpo = {"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "retornos": retornos_publicos(),
              "espera": espera_publica(), "estoque": estoque_fila(), "ofertas": ofertas_publicas(), "precos": precos_referencia(),
-             "ts": int(time.time() * 1000)}
+             "gestao": opcoes_gestao(), "lancadas": lancadas_publicas(), "ts": int(time.time() * 1000)}
     arquivos = {"lembretes.json": {"content": json.dumps(corpo, ensure_ascii=False)}}
     fotos = json.dumps(fotos_ofertas_publicas())
     if fotos != _gist_pendente.get("fotos"):  # fotos pesam: só vão quando mudam (no mesmo PATCH)
@@ -1482,7 +1673,10 @@ def processar_gist():
     g = gist_request()
     remotas = json_do_arquivo(g.get("files") or {}, "acoes.json", {})
     if isinstance(remotas, dict) and remotas:
-        gravar_acoes(remotas)
+        try:
+            lancar_vendas_gestao(gravar_acoes(remotas))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[gestão] {exc}")
     lista = json_do_arquivo(g.get("files") or {}, "push.json", [])
     lista = [i for i in lista if isinstance(i, dict) and i.get("endpoint") and i.get("keys")]
     with _lock:
@@ -1560,7 +1754,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json({"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "acoes": ler_acoes(),
                                "retornos": retornos_publicos(),
                                "espera": espera_publica(), "estoque": estoque_fila(), "ofertas": ofertas_publicas(), "precos": precos_referencia(),
-                               "fotosOfertas": fotos_ofertas_publicas(), "ts": int(time.time() * 1000)})
+                               "fotosOfertas": fotos_ofertas_publicas(), "gestao": opcoes_gestao(), "lancadas": lancadas_publicas(),
+                               "ts": int(time.time() * 1000)})
         if path == "/api/analise":  # a extensão pergunta: a análise dessa coleta já ficou pronta?
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             data, turno = q.get("data", [""])[0], q.get("turno", [""])[0]
@@ -1630,8 +1825,13 @@ class Handler(SimpleHTTPRequestHandler):
                     gist_request("PATCH", {"files": {"acoes.json": {"content": json.dumps(tudo, ensure_ascii=False)}}})
                 except Exception as exc:  # noqa: BLE001
                     print(f"[gist] ações: {exc}")
-                    return self._json({"ok": True, "aviso": "salvo no PC; Gist falhou"})
-            return self._json({"ok": True})
+            try:
+                lancar_vendas_gestao(tudo)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[gestão] {exc}")
+            lanc = ler_lancadas()
+            return self._json({"ok": True, "lancadas": {k: {"ok": bool(lanc[k].get("ok")), "erro": lanc[k].get("erro") or ""}
+                                                        for k in novas if k in lanc}})
         if path == "/api/noite":
             data = str(corpo.get("data") or time.strftime("%Y-%m-%d"))
             if not coletas_do_dia(data, "noite"):

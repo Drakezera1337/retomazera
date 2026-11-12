@@ -7,7 +7,7 @@ const K = { cache: 'retomazera:cache', push: 'retomazera:push', acoesPendentes: 
 const lerJSON = (k, p) => { try { return JSON.parse(localStorage.getItem(k)) ?? p; } catch { return p; } };
 const gravarJSON = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem storage */ } };
 
-const S = { dias: [], semanas: [], noites: [], retornos: [], espera: [], estoque: [], ofertas: [], precos: {}, fotosOfertas: {}, acoes: {}, cards: {}, mostrarExcluidos: false, ts: 0, status: null, carregando: false, erro: '' };
+const S = { dias: [], semanas: [], noites: [], retornos: [], espera: [], estoque: [], ofertas: [], precos: {}, fotosOfertas: {}, gestao: {}, lancadas: {}, acoes: {}, cards: {}, mostrarExcluidos: false, ts: 0, status: null, carregando: false, erro: '' };
 
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.hidden = false;
@@ -39,14 +39,14 @@ async function carregar() {
   try {
     if (NO_PC) {
       const r = await api('lembretes');
-      S.dias = r.dias || []; S.semanas = r.semanas || []; S.noites = r.noites || []; S.retornos = r.retornos || []; S.espera = r.espera || []; S.estoque = r.estoque || []; S.ofertas = r.ofertas || []; S.precos = r.precos || {}; S.fotosOfertas = r.fotosOfertas || {}; S.acoes = r.acoes || {}; S.ts = r.ts;
+      S.dias = r.dias || []; S.semanas = r.semanas || []; S.noites = r.noites || []; S.retornos = r.retornos || []; S.espera = r.espera || []; S.estoque = r.estoque || []; S.ofertas = r.ofertas || []; S.precos = r.precos || {}; S.fotosOfertas = r.fotosOfertas || {}; S.gestao = r.gestao || {}; S.lancadas = r.lancadas || {}; S.acoes = r.acoes || {}; S.ts = r.ts;
       S.status = await api('status');
     } else if (Sync.enabled()) {
       const { 'lembretes.json': l, 'acoes.json': ac, 'fotos_ofertas.json': fo } = await Sync.ler({ 'lembretes.json': { dias: [] }, 'acoes.json': {}, 'fotos_ofertas.json': {} });
       S.fotosOfertas = fo || {};
-      S.dias = l.dias || []; S.semanas = l.semanas || []; S.noites = l.noites || []; S.retornos = l.retornos || []; S.espera = l.espera || []; S.estoque = l.estoque || []; S.ofertas = l.ofertas || []; S.precos = l.precos || {}; S.ts = l.ts || 0;
+      S.dias = l.dias || []; S.semanas = l.semanas || []; S.noites = l.noites || []; S.retornos = l.retornos || []; S.espera = l.espera || []; S.estoque = l.estoque || []; S.ofertas = l.ofertas || []; S.precos = l.precos || {}; S.gestao = l.gestao || {}; S.lancadas = l.lancadas || {}; S.ts = l.ts || 0;
       S.acoes = juntarAcoes(ac || {}, lerJSON(K.acoesPendentes, {}));
-      gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, noites: S.noites, retornos: S.retornos, espera: S.espera, estoque: S.estoque, ofertas: S.ofertas, precos: S.precos, acoes: S.acoes, ts: S.ts });
+      gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, noites: S.noites, retornos: S.retornos, espera: S.espera, estoque: S.estoque, ofertas: S.ofertas, precos: S.precos, gestao: S.gestao, lancadas: S.lancadas, acoes: S.acoes, ts: S.ts });
     }
   } catch (err) {
     S.erro = err.message || String(err);
@@ -113,6 +113,11 @@ function salvarAcoes(novas) {
       if (NO_PC) {
         const r = await api('acoes', { method: 'POST', body: novas });
         if (!r.ok) throw new Error(r.erro || 'servidor recusou');
+        for (const [k, l] of Object.entries(r.lancadas || {})) {
+          S.lancadas[k] = { ...l, em: Date.now() };
+          toast(l.erro ? `⚠️ Não lancei na Gestão: ${l.erro}` : l.ok ? '📒 Venda lançada na Gestão' : '');
+        }
+        if (Object.keys(r.lancadas || {}).length) rotear();
       } else if (Sync.enabled()) {
         const pend = { ...lerJSON(K.acoesPendentes, {}), ...novas };
         gravarJSON(K.acoesPendentes, pend);
@@ -187,7 +192,7 @@ function cartaoVenda(v) {
     <div class="item-topo">
       <span class="item-nome">${esc(v.nome || 'Cliente')}${fone ? ` <span class="item-fone">${esc(fone)}</span>` : ''}</span>
       <span class="chip ${cls}">${esc(nomeCanal)}</span>
-      ${st.concluida ? '<span class="chip vend">Concluída</span>' : v.status === 'a confirmar' ? '<span class="chip media">A confirmar</span>' : '<span class="chip vend">Confirmada</span>'}
+      ${st.concluida ? `<span class="chip vend">Concluída</span>${seloGestao(v._chave)}` : v.status === 'a confirmar' ? '<span class="chip media">A confirmar</span>' : '<span class="chip vend">Confirmada</span>'}
     </div>
     <p><b>${atrasada ? `⚠️ Era ${esc(dataBR(v.data, false))}` : v.data === hojeIso() ? 'Hoje' : esc(dataBR(v.data))}${v.hora ? ` · 🕒 ${esc(v.hora)}` : ''}</b>${v.local ? ` · 📍 ${esc(v.local)}` : ''}${v.entrega ? ` <span class="sub">(${esc(v.entrega)})</span>` : ''}</p>
     ${(v.itens || []).length ? `<ul class="venda-itens">${v.itens.map((i) => `<li>${esc(i.descricao)}${brlV(i.valor) ? ` <span class="sub">— ${esc(brlV(i.valor))}</span>` : ''}</li>`).join('')}</ul>` : ''}
@@ -197,6 +202,7 @@ function cartaoVenda(v) {
     ${v.entrada ? `<p>🔁 Entrada: ${esc(v.entrada)}</p>` : ''}
     ${v.observacoes ? `<p>📝 ${esc(v.observacoes)}</p>` : ''}
     ${v.resumo ? `<p class="sub">${esc(v.resumo)}</p>` : ''}
+    ${erroGestao(v._chave)}
     <div class="acoes">
       ${botaoConversa(link && link.split('?')[0])}
       <button class="btn" data-copiar-venda="${esc(v._chave)}">📋 Copiar</button>
@@ -211,6 +217,9 @@ function marcarVenda(chaveVenda, campo) {
   const v = S.cards[chaveVenda] || {};
   const atual = S.acoes[chaveVenda] || {};
   const valor = !atual[campo];
+  if (campo === 'concluida' && valor) { abrirFormVenda(chaveVenda); return; }
+  if (campo === 'concluida' && !valor && S.lancadas[chaveVenda]?.ok
+      && !confirm('Desfazer a venda? O videogame volta para o estoque na Gestão (sem preço de venda, pagamento e parcelas).')) return;
   const novas = { [chaveVenda]: { ...atual, nome: v.nome, canal: v.canal, data: v.data, [campo]: valor, ts: Date.now() } };
   // venda concluída = cliente vendido (sai das sugestões; se voltar a negociar, aparece com "⭐ Já comprou")
   if (campo === 'concluida') {
@@ -220,6 +229,239 @@ function marcarVenda(chaveVenda, campo) {
   }
   if (campo === 'cancelada' && valor) toast('Venda tirada da lista.');
   salvarAcoes(novas);
+}
+// ---------------------------------------------------------------- lançar a venda na Gestão (✅ Vendido)
+// O formulário tem os mesmos campos da venda na Gestão; vai junto da ação (acoes[venda].gestao) e o
+// servidor do PC grava no produto da Gestão — do PC na hora, do celular quando o PC lê o Gist.
+const FORMAS = [['cartao', '💳 Cartão'], ['pix', '💚 Pix'], ['dinheiro', '💵 Dinheiro'], ['fiado', '🧾 Fiado']];
+const ORIGEM_CANAL = { olx: 'OLX', facebook: 'Facebook', whatsapp: 'Instagram / WhatsApp', instagram: 'Instagram / WhatsApp' };
+const brlNum = (s) => { const n = Number(String(s ?? '').replace(/\./g, '').replace(',', '.')); return isNaN(n) ? 0 : n; };
+const numTxt = (n) => (n ? String(Math.round(n * 100) / 100).replace('.', ',') : '');
+function foneGestao(v) { // Gestão guarda "22 99891-9570"
+  const f = foneBR(v);
+  return f.replace(/^\((\d{2})\) /, '$1 ');
+}
+function somarMes(iso, n = 1) {
+  const [a, m, d] = iso.split('-').map(Number);
+  const dt = new Date(a, m - 1 + n, 1);
+  const ult = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(Math.min(d, ult)).padStart(2, '0')}`;
+}
+function recebedoresDe(forma) { // já usados na Gestão, sem repetir (João/Joao)
+  const vistos = new Set();
+  return ((S.gestao.recebedores || {})[forma] || []).filter((r) => {
+    const k = `${r.tipo}|${(r.nome || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()}`;
+    if (vistos.has(k) || /^\d+$/.test(r.nome || '')) return false;
+    vistos.add(k); return true;
+  });
+}
+function itensParaGestao(v) {
+  const aloc = alocarVendas();
+  return itensConsoleVenda(v).map((x) => ({ ...x, u: aloc.porItem[x.chave] })).filter((x) => x.u);
+}
+function pagamentoSugerido(v, preco) {
+  const t = `${v.pagamento || ''} ${v.observacoes || ''}`.toLowerCase();
+  const pag = { pix: /pix/.test(t), cartao: /cart[aã]o|cr[eé]dito|d[eé]bito|maquin/.test(t), dinheiro: /dinheiro|esp[eé]cie/.test(t), fiado: /fiado|depois de 30|ap[oó]s 30|30 dias depois/.test(t) };
+  if (!Object.values(pag).some(Boolean)) pag.pix = true;
+  const formas = Object.keys(pag).filter((k) => pag[k]);
+  return { pag, val: formas.length === 1 ? { [formas[0]]: preco } : {} };
+}
+function abrirFormVenda(chaveVenda) {
+  const v = S.cards[chaveVenda];
+  if (!v) return;
+  const ant = (S.acoes[chaveVenda] || {}).gestao; // reabrindo depois de um erro: começa do que foi enviado
+  const itens = ant?.itens?.length
+    ? ant.itens.map((a) => ({ it: { descricao: a.descricao || '', valor: a.preco_venda },
+      u: S.estoque.find((x) => x.uid === a.uid) || { uid: a.uid, nome: a.nome, custo: a.custo, familia: a.familia || '' } }))
+    : itensParaGestao(v);
+  const hoje = hojeIso();
+  const base = ant?.itens?.[0] || {};
+  const dataV = base.data_venda || (v.data && v.data <= hoje ? v.data : hoje);
+  const origens = S.gestao.origens || Object.values(ORIGEM_CANAL);
+  const origem = base.origem_venda ?? ORIGEM_CANAL[(v.canal || '').toLowerCase()] ?? '';
+  const nomeComp = base.nome_comprador || `${v.nome || ''} Comprador ${itens[0]?.u.familia || ''}`.trim();
+  const blocos = itens.map((x, i) => {
+    const a = ant?.itens?.find((y) => y.uid === x.u.uid);
+    const preco = a ? a.preco_venda : Number(x.it.valor) || (itens.length === 1 ? Number(v.total) : 0) || Number(x.u.preco) || 0;
+    const sug = a ? { pag: a.pag, val: a.val } : pagamentoSugerido(v, preco);
+    const linhas = FORMAS.map(([k, rot]) => {
+      const recs = recebedoresDe(k);
+      const r = a?.rec?.[k] || recs[0] || { tipo: 'CPF', nome: '' };
+      const tipos = k === 'fiado' ? ['CPF', 'CNPJ', 'Dinheiro'] : ['CPF', 'CNPJ'];
+      return `<div class="fp-linha" data-forma="${k}">
+        <label class="fp-chk"><input type="checkbox" ${sug.pag?.[k] ? 'checked' : ''}> ${rot}</label>
+        <div class="fp-det">
+          <input class="fp-val" inputmode="decimal" placeholder="R$ (vazio = o que falta)" value="${esc(numTxt(Number(sug.val?.[k]) || 0))}">
+          ${k === 'dinheiro' ? '' : `<select class="fp-tipo">${tipos.map((t) => `<option ${t === r.tipo ? 'selected' : ''}>${t}</option>`).join('')}</select>
+          <input class="fp-nome" list="rec-${k}" placeholder="Quem recebeu" value="${esc(r.nome || '')}">`}
+        </div>
+      </div>`;
+    }).join('');
+    const parc = a?.parcelas?.length ? a.parcelas : [];
+    return `<div class="fv-item" data-uid="${esc(x.u.uid)}" data-custo="${Number(x.u.custo) || 0}" data-nome="${esc(x.u.nome || x.u.item || '')}" data-familia="${esc(x.u.familia || '')}" data-descricao="${esc(x.it.descricao || '')}">
+      <div class="unidade">${x.u.foto ? `<img src="${x.u.foto}" alt="">` : `<div class="sem-foto">${ICONE_FAMILIA(x.u.familia)}</div>`}
+        <div class="unidade-txt"><b>${esc(x.u.nome || x.u.item)}</b><div class="sub">${esc(x.it.descricao || '')} · custo ${esc(brlV(x.u.custo) || '—')}</div></div></div>
+      <label class="fv-campo">Preço de venda (R$)<input class="fv-preco" inputmode="decimal" value="${esc(numTxt(preco))}"></label>
+      <div class="fv-lucro sub"></div>
+      <div class="fv-rot">Forma de pagamento</div>
+      ${linhas}
+      <div class="fv-parcelas" ${sug.pag?.fiado ? '' : 'hidden'}>
+        <div class="sub">Parcelas do fiado (data e valor de cada uma)</div>
+        <div class="fv-plista">${parc.map((p) => linhaParcela(p.venc, numTxt(Number(p.valor)))).join('')}</div>
+        <div class="acoes"><button type="button" class="btn btn-mini" data-fv="parcela">+ Parcela</button>
+          <button type="button" class="btn btn-mini" data-fv="dividir">Dividir igualmente</button><span class="fv-soma sub"></span></div>
+      </div>
+    </div>`;
+  }).join('');
+  const listas = ['cartao', 'pix', 'fiado'].map((k) => `<datalist id="rec-${k}">${recebedoresDe(k).map((r) => `<option value="${esc(r.nome)}">${esc(r.tipo)}</option>`).join('')}</datalist>`).join('');
+  fecharFormVenda();
+  const d = document.createElement('div');
+  d.className = 'modal';
+  d.dataset.modalVenda = chaveVenda;
+  d.innerHTML = `<form class="modal-caixa form-venda" novalidate>
+    <h2>💰 Vendido — ${esc(v.nome || 'cliente')}</h2>
+    ${itens.length ? `<p class="sub">Vai direto para a Gestão como vendido, igual ao formulário de lá.</p>
+      <div class="fv-grade">
+        <label class="fv-campo">Data da venda<input type="date" class="fv-data" value="${esc(dataV)}" max="${esc(hoje)}"></label>
+        <label class="fv-campo">Origem da venda<select class="fv-origem"><option value=""></option>${origens.map((o) => `<option ${o === origem ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select></label>
+        <label class="fv-campo">Nome do comprador<input class="fv-comprador" value="${esc(nomeComp)}"></label>
+        <label class="fv-campo">Telefone do comprador<input class="fv-tel" value="${esc(base.tel_comprador ?? foneGestao(v))}"></label>
+      </div>
+      ${blocos}${listas}`
+    : `<p>Não achei o videogame dessa venda no estoque da Gestão — dá para concluir aqui e lançar a venda por lá.</p>`}
+    ${v.pagamento || v.entrada ? `<p class="sub">Combinado: ${esc([v.pagamento, v.entrada ? `entrada ${v.entrada}` : ''].filter(Boolean).join(' · '))}</p>` : ''}
+    <p class="fv-erro" hidden></p>
+    <div class="acoes fv-botoes">
+      ${itens.length ? '<button type="submit" class="btn btn-verde">✅ Lançar na Gestão</button>' : ''}
+      <button type="button" class="btn" data-fv="so-concluir">${itens.length ? 'Só concluir aqui' : '✅ Concluir'}</button>
+      <button type="button" class="btn" data-fv="fechar">Cancelar</button>
+    </div>
+  </form>`;
+  document.body.appendChild(d);
+  d.querySelectorAll('.fv-item').forEach(atualizarItemVenda);
+}
+function linhaParcela(venc = '', valor = '') {
+  return `<div class="fv-parcela"><input type="date" class="fp-venc" value="${esc(venc)}"><input class="fp-pval" inputmode="decimal" placeholder="R$" value="${esc(valor)}"><button type="button" class="btn btn-mini" data-fv="tirar">✕</button></div>`;
+}
+function fecharFormVenda() { document.querySelector('.modal')?.remove(); }
+function valorFiado(item) {
+  const l = item.querySelector('[data-forma="fiado"]');
+  const preco = brlNum(item.querySelector('.fv-preco').value);
+  const v = brlNum(l.querySelector('.fp-val').value);
+  if (v) return v;
+  const outros = [...item.querySelectorAll('.fp-linha')].filter((x) => x !== l && x.querySelector('input[type=checkbox]').checked);
+  const semValor = outros.filter((x) => !brlNum(x.querySelector('.fp-val').value)).length;
+  return semValor ? 0 : Math.max(preco - outros.reduce((s, x) => s + brlNum(x.querySelector('.fp-val').value), 0), 0);
+}
+function atualizarItemVenda(item) {
+  const preco = brlNum(item.querySelector('.fv-preco').value), custo = Number(item.dataset.custo) || 0;
+  const luc = preco - custo;
+  item.querySelector('.fv-lucro').innerHTML = preco && custo ? `Lucro <b class="${luc >= 0 ? 'lucro' : 'prejuizo'}">${luc >= 0 ? '+' : ''}${esc(brlV(luc))}</b>` : '';
+  item.querySelectorAll('.fp-linha').forEach((l) => { l.classList.toggle('on', l.querySelector('input[type=checkbox]').checked); });
+  item.querySelectorAll('.fp-linha').forEach((l) => {
+    const t = l.querySelector('.fp-tipo'), n = l.querySelector('.fp-nome');
+    if (t && n) n.hidden = t.value === 'Dinheiro';
+  });
+  const fiado = item.querySelector('[data-forma="fiado"] input[type=checkbox]').checked;
+  const bp = item.querySelector('.fv-parcelas');
+  bp.hidden = !fiado;
+  if (fiado && !bp.querySelector('.fv-parcela')) {
+    const data = document.querySelector('.fv-data')?.value || hojeIso();
+    bp.querySelector('.fv-plista').insertAdjacentHTML('beforeend', linhaParcela(somarMes(data), numTxt(valorFiado(item))));
+  }
+  const soma = [...bp.querySelectorAll('.fp-pval')].reduce((s, x) => s + brlNum(x.value), 0);
+  const total = valorFiado(item);
+  bp.querySelector('.fv-soma').textContent = fiado ? `Soma ${brlV(soma)}${total ? ` de ${brlV(total)}` : ''}` : '';
+}
+function acaoFormVenda(btn) {
+  const modal = btn.closest('.modal'), item = btn.closest('.fv-item');
+  const o = btn.dataset.fv;
+  if (o === 'fechar') { fecharFormVenda(); return; }
+  if (o === 'so-concluir') { const k = modal.dataset.modalVenda; fecharFormVenda(); concluirVenda(k, null); return; }
+  if (o === 'tirar') { btn.closest('.fv-parcela').remove(); atualizarItemVenda(item); return; }
+  if (o === 'parcela') {
+    const ps = [...item.querySelectorAll('.fv-parcela')];
+    const ult = ps.at(-1)?.querySelector('.fp-venc').value || modal.querySelector('.fv-data').value || hojeIso();
+    const falta = Math.max(valorFiado(item) - ps.reduce((s, p) => s + brlNum(p.querySelector('.fp-pval').value), 0), 0);
+    item.querySelector('.fv-plista').insertAdjacentHTML('beforeend', linhaParcela(somarMes(ult), numTxt(falta)));
+    atualizarItemVenda(item); return;
+  }
+  if (o === 'dividir') {
+    const ps = [...item.querySelectorAll('.fp-pval')], total = valorFiado(item);
+    if (!ps.length || !total) return;
+    const cada = Math.floor((total / ps.length) * 100) / 100;
+    ps.forEach((p, i) => { p.value = numTxt(i === ps.length - 1 ? total - cada * (ps.length - 1) : cada); });
+    atualizarItemVenda(item);
+  }
+}
+function lerFormVenda(modal) {
+  const erro = (m) => { throw new Error(m); };
+  const data = modal.querySelector('.fv-data').value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) erro('Preencha a data da venda.');
+  const comum = { data_venda: data, origem_venda: modal.querySelector('.fv-origem').value,
+    nome_comprador: modal.querySelector('.fv-comprador').value.trim(), tel_comprador: modal.querySelector('.fv-tel').value.trim() };
+  return [...modal.querySelectorAll('.fv-item')].map((item) => {
+    const preco = brlNum(item.querySelector('.fv-preco').value);
+    if (!preco) erro('Preencha o preço de venda.');
+    const pag = {}, val = {}, rec = {};
+    item.querySelectorAll('.fp-linha').forEach((l) => {
+      const k = l.dataset.forma;
+      pag[k] = l.querySelector('input[type=checkbox]').checked;
+      if (!pag[k]) return;
+      val[k] = brlNum(l.querySelector('.fp-val').value);
+      const t = l.querySelector('.fp-tipo');
+      if (t) rec[k] = { tipo: t.value, nome: t.value === 'Dinheiro' ? '' : l.querySelector('.fp-nome').value.trim() };
+    });
+    if (!Object.values(pag).some(Boolean)) erro('Marque a forma de pagamento.');
+    const parcelas = pag.fiado ? [...item.querySelectorAll('.fv-parcela')].map((p, i) => {
+      const venc = p.querySelector('.fp-venc').value, valor = brlNum(p.querySelector('.fp-pval').value);
+      if (!venc) erro(`Data da ${i + 1}ª parcela do fiado.`);
+      if (!valor) erro(`Valor da ${i + 1}ª parcela do fiado.`);
+      return { venc, valor };
+    }) : [];
+    if (pag.fiado) {
+      if (!parcelas.length) erro('Adicione as parcelas do fiado.');
+      const soma = parcelas.reduce((s, p) => s + p.valor, 0), total = val.fiado || 0;
+      if (total && Math.abs(soma - total) > 0.01) erro(`A soma das parcelas (${brlV(soma)}) é diferente do valor do fiado (${brlV(total)}).`);
+    }
+    return { uid: item.dataset.uid, nome: item.dataset.nome, custo: Number(item.dataset.custo) || 0, familia: item.dataset.familia,
+      descricao: item.dataset.descricao, preco_venda: preco, ...comum, pag, val, rec, parcelas };
+  });
+}
+function enviarFormVenda(modal) {
+  const msg = modal.querySelector('.fv-erro');
+  try {
+    const itens = lerFormVenda(modal);
+    const k = modal.dataset.modalVenda;
+    fecharFormVenda();
+    concluirVenda(k, { ts: Date.now(), itens });
+  } catch (err) {
+    msg.textContent = err.message; msg.hidden = false;
+  }
+}
+// conclui a venda (cliente vira vendido) — com gestao = formulário para lançar na Gestão
+function concluirVenda(chaveVenda, gestao) {
+  const v = S.cards[chaveVenda] || {};
+  const atual = S.acoes[chaveVenda] || {};
+  const ck = chaveCliente(v), c = S.acoes[ck] || {};
+  const novas = {
+    [chaveVenda]: { ...atual, nome: v.nome, canal: v.canal, data: v.data, concluida: true, ...(gestao ? { gestao } : {}), ts: Date.now() },
+    [ck]: { ...c, nome: v.nome, canal: v.canal, contato: v.contato, vendido: true, vendidoEm: Date.now(), vendas: (c.vendas || 0) + (atual.concluida ? 0 : 1), ts: Date.now() },
+  };
+  toast(gestao ? (NO_PC ? 'Venda concluída 💰 — lançando na Gestão…' : 'Venda concluída 💰 — o PC lança na Gestão quando ler o Gist.') : 'Venda concluída 💰 — lembre de lançar na Gestão.');
+  salvarAcoes(novas);
+}
+function seloGestao(chaveVenda) {
+  const a = S.acoes[chaveVenda] || {}, l = S.lancadas[chaveVenda];
+  if (!a.concluida || !a.gestao) return '';
+  if (!l || (l.em || 0) < (a.gestao.ts || 0)) return '<span class="chip media">⏳ Indo p/ Gestão</span>';
+  if (l.erro) return '<span class="chip alta">⚠️ Gestão</span>';
+  return l.ok ? '<span class="chip vend">📒 Na Gestão</span>' : '';
+}
+function erroGestao(chaveVenda) {
+  const a = S.acoes[chaveVenda] || {}, l = S.lancadas[chaveVenda];
+  if (!a.concluida || !a.gestao || !l?.erro || (l.em || 0) < (a.gestao.ts || 0)) return '';
+  return `<p class="fv-erro">⚠️ Não lancei na Gestão: ${esc(l.erro)} <button class="btn btn-mini" data-corrigir-venda="${esc(chaveVenda)}">✏️ Corrigir</button></p>`;
 }
 // ---------------------------------------------------------------- noite: preparar as vendas de amanhã
 function blocoNoite() {
@@ -920,6 +1162,10 @@ function rotear() {
   if (aba === 'ajustes') ligarAjustes();
 }
 document.addEventListener('click', async (e) => {
+  const fv = e.target.closest('[data-fv]');
+  if (fv) { e.preventDefault(); acaoFormVenda(fv); return; }
+  const cg = e.target.closest('[data-corrigir-venda]');
+  if (cg) { abrirFormVenda(cg.dataset.corrigirVenda); return; }
   const c = e.target.closest('[data-copiar]');
   if (c) {
     const x = S.cards[c.dataset.copiar];
@@ -947,7 +1193,14 @@ document.addEventListener('click', async (e) => {
     try { await navigator.clipboard.writeText(textoVenda(S.cards[cv.dataset.copiarVenda] || {})); toast('Resumo da venda copiado'); } catch { toast('Não consegui copiar'); }
   }
 });
+document.addEventListener('submit', (e) => {
+  const f = e.target.closest('.form-venda');
+  if (f) { e.preventDefault(); enviarFormVenda(f.closest('.modal')); }
+});
+document.addEventListener('input', (e) => { const it = e.target.closest('.fv-item'); if (it) atualizarItemVenda(it); });
 document.addEventListener('change', (e) => {
+  const it = e.target.closest('.fv-item');
+  if (it) { atualizarItemVenda(it); return; }
   const sel = e.target.closest('[data-vincular-uid]');
   if (sel && sel.value) vincular(sel.value, sel.dataset.vincularUid, 'manual');
   const tr = e.target.closest('[data-trocar-item]');
@@ -969,7 +1222,7 @@ if (location.hash.startsWith('#config=')) {
 }
 if (!NO_PC) {
   const cache = lerJSON(K.cache, null);
-  if (cache?.dias) { S.dias = cache.dias; S.semanas = cache.semanas || []; S.noites = cache.noites || []; S.retornos = cache.retornos || []; S.espera = cache.espera || []; S.estoque = cache.estoque || []; S.ofertas = cache.ofertas || []; S.precos = cache.precos || {}; S.acoes = cache.acoes || {}; S.ts = cache.ts; }
+  if (cache?.dias) { S.dias = cache.dias; S.semanas = cache.semanas || []; S.noites = cache.noites || []; S.retornos = cache.retornos || []; S.espera = cache.espera || []; S.estoque = cache.estoque || []; S.ofertas = cache.ofertas || []; S.precos = cache.precos || {}; S.gestao = cache.gestao || {}; S.lancadas = cache.lancadas || {}; S.acoes = cache.acoes || {}; S.ts = cache.ts; }
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 rotear();
