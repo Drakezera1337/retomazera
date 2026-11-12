@@ -1124,6 +1124,13 @@ def ja_analisada(data):
         return False
 
 
+_estado = {}  # "data|turno" → {estado, ...}: a extensão consulta para avisar no PC quando a análise ficar pronta
+
+
+def marcar_estado(data, turno, estado, **extra):
+    _estado[f"{data}|{turno}"] = {"estado": estado, "em": int(time.time() * 1000), **extra}
+
+
 def agendar_analise(data, turno=""):
     # Chamado a cada coleta recebida: analisa já se todas as fontes chegaram; senão, em até 20 min.
     coletas = coletas_do_dia(data, turno)
@@ -1136,6 +1143,9 @@ def agendar_analise(data, turno=""):
     with _analise["lock"]:
         if _analise[chave_timer]:
             _analise[chave_timer].cancel()
+        faltam = sorted(f for f in fontes_esperadas() if f not in coletas)
+        marcar_estado(data, turno, "esperando", rodaEm=int((time.time() + atraso) * 1000),
+                      faltam=[NOMES_FONTES.get(f, f) for f in faltam])
         t = threading.Timer(atraso, funcao, args=args)
         t.daemon = True
         _analise[chave_timer] = t
@@ -1148,12 +1158,16 @@ def analisar(data, notificar=True, forcar=False):
     # Roda `claude -p` com analise_prompt.md, lê o resultado.json e publica (Gist + push).
     with _analise["lock"]:
         if _analise["rodando"]:
-            print("[análise] já tem uma rodando")
+            print("[análise] já tem uma rodando; tento de novo em 2 min")
+            t = threading.Timer(120, analisar, args=(data, notificar, forcar)); t.daemon = True; t.start()
             return False
         if not forcar and ja_analisada(data):
             print(f"[análise] {data} já analisada")
+            if _estado.get(f"{data}|", {}).get("estado") in ("esperando", "rodando"):
+                marcar_estado(data, "", "pronta", resumo="já estava analisada")
             return False
         _analise["rodando"] = True
+        marcar_estado(data, "", "rodando")
     pasta = os.path.join(PASTA_COLETAS, data)
     saida = os.path.join(pasta, "resultado.json")
     try:
@@ -1176,9 +1190,13 @@ def analisar(data, notificar=True, forcar=False):
             print(f"[gist] publicar: {exc}")
         enviados = enviar_push(payload_dia(dia)) if notificar else 0
         print(f"[análise] {data}: {len(dia['itens'])} cliente(s), push={enviados}, {time.time() - inicio:.0f} s")
+        hoje_v = [a for a in dia.get("agendadas") or [] if a.get("data") == data]
+        marcar_estado(data, "", "pronta", push=enviados,
+                      resumo=f"{len(dia['itens'])} cliente(s) para chamar" + (f" · {len(hoje_v)} venda(s) hoje" if hoje_v else ""))
         return True
     except Exception as exc:  # noqa: BLE001
         print(f"[análise] {data}: FALHOU — {exc}")
+        marcar_estado(data, "", "falhou", erro=str(exc)[:200])
         enviar_push({"title": "Retomazera ⚠️", "body": f"A análise de hoje falhou: {str(exc)[:150]}", "tag": "retomazera-erro"}) if notificar else None
         return False
     finally:
@@ -1211,10 +1229,12 @@ def analisar_ronda(data, rodada, notificar=True, forcar=False):
         if not coletas or (not forcar and os.path.exists(saida) and os.path.getmtime(saida) * 1000 >= ultima):
             return False
         _analise["rodando"] = True
+        marcar_estado(data, turno, "rodando")
     try:
         n_conv = sum(len(c.get("conversas") or []) for c in coletas.values())
         if not n_conv:  # nada novo: nem chama o Claude
             print(f"[ronda {rodada}h] {data}: nenhuma conversa nova — sem análise")
+            marcar_estado(data, turno, "pronta", push=0, resumo="nenhuma conversa nova")
             with open(saida, "w", encoding="utf-8") as f:
                 json.dump({"vazia": True}, f)
             return True
@@ -1237,9 +1257,11 @@ def analisar_ronda(data, rodada, notificar=True, forcar=False):
             enviados = enviar_push({"title": f"🔄 {rodada}h: {str(corpo.get('titulo') or 'novidades na lista')[:80]}",
                                     "body": str(corpo.get("resumo") or "")[:220], "tag": f"retomazera-ronda-{data}", "data": data})
         print(f"[ronda {rodada}h] {data}: {mudou} mudança(s), push={enviados}, {time.time() - inicio:.0f} s")
+        marcar_estado(data, turno, "pronta", push=enviados, resumo=str(corpo.get("resumo") or f"{mudou} mudança(s)")[:200])
         return True
     except Exception as exc:  # noqa: BLE001
         print(f"[ronda {rodada}h] {data}: FALHOU — {exc}")
+        marcar_estado(data, turno, "falhou", erro=str(exc)[:200])
         return False  # ronda falhando não incomoda no celular: a próxima (ou a da noite) cobre
     finally:
         _analise["rodando"] = False
@@ -1350,6 +1372,7 @@ def analisar_noite(data, notificar=True, forcar=False):
         if not coletas or (not forcar and os.path.exists(arquivo) and os.path.getmtime(arquivo) * 1000 >= ultima):
             return False
         _analise["rodando"] = True
+        marcar_estado(data, "noite", "rodando")
     try:
         amanha = (date.fromisoformat(data) + timedelta(days=1)).isoformat()
         with open(os.path.join(BASE_DIR, "noite_prompt.md"), encoding="utf-8") as f:
@@ -1386,9 +1409,11 @@ def analisar_noite(data, notificar=True, forcar=False):
             print(f"[gist] publicar: {exc}")
         n = enviar_push(payload_noite(noite)) if notificar else 0
         print(f"[noite] {data}: {len(limpas)} venda(s) marcada(s), {len(noite['preparar'])} preparo(s), push={n}, {time.time() - inicio:.0f} s")
+        marcar_estado(data, "noite", "pronta", push=n, resumo=f"{len(limpas)} venda(s) marcada(s) · {len(noite['preparar'])} item(ns) para preparar")
         return True
     except Exception as exc:  # noqa: BLE001
         print(f"[noite] {data}: FALHOU — {exc}")
+        marcar_estado(data, "noite", "falhou", erro=str(exc)[:200])
         if notificar:
             enviar_push({"title": "Retomazera ⚠️", "body": f"A análise da noite falhou: {str(exc)[:150]}", "tag": "retomazera-erro"})
         return False
@@ -1536,6 +1561,10 @@ class Handler(SimpleHTTPRequestHandler):
                                "retornos": retornos_publicos(),
                                "espera": espera_publica(), "estoque": estoque_fila(), "ofertas": ofertas_publicas(), "precos": precos_referencia(),
                                "fotosOfertas": fotos_ofertas_publicas(), "ts": int(time.time() * 1000)})
+        if path == "/api/analise":  # a extensão pergunta: a análise dessa coleta já ficou pronta?
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            data, turno = q.get("data", [""])[0], q.get("turno", [""])[0]
+            return self._json(_estado.get(f"{data}|{turno}") or {"estado": "desconhecido"})
         if path == "/api/coletas":
             data = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("data", [""])[0]
             return self._json({f: {"conversas": len(c.get("conversas") or []), "erro": c.get("erro"), "coletadoEm": c.get("coletadoEm")}

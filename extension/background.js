@@ -78,7 +78,47 @@ async function iniciar() {
 }
 chrome.runtime.onInstalled.addListener(iniciar);
 chrome.runtime.onStartup.addListener(async () => { await chrome.storage.session.set({ abriuEm: Date.now() }); iniciar(); });
-chrome.alarms.onAlarm.addListener((al) => { if (al.name === 'verificar') verificar(); });
+chrome.alarms.onAlarm.addListener((al) => { if (al.name === 'verificar') verificar(); if (al.name === 'analise') acompanharAnalise(); });
+
+// ---- depois da coleta: acompanha a análise no servidor e avisa no Windows quando ficar pronta e for enviada
+async function comecarAcompanhar(data, turno, nome) {
+  await chrome.storage.local.set({ acompanhar: { data, turno, nome, inicio: Date.now(), avisos: {} } });
+  chrome.alarms.create('analise', { delayInMinutes: 1, periodInMinutes: 1 });
+}
+async function avisoAnalise(titulo, msg, fim) {
+  const c = await config();
+  if (c.avisos === false) return;
+  try {
+    await chrome.notifications.clear('rz-analise');
+    await chrome.notifications.create('rz-analise', { type: 'basic', iconUrl: 'icon.png', title: titulo, message: msg.slice(0, 300),
+      priority: fim ? 2 : 0, silent: !fim, requireInteraction: false });
+  } catch { /* sem permissão de notificação */ }
+}
+async function acompanharAnalise() {
+  const { acompanhar: a } = await chrome.storage.local.get('acompanhar');
+  if (!a) { chrome.alarms.clear('analise'); return; }
+  const parar = async () => { await chrome.storage.local.remove('acompanhar'); chrome.alarms.clear('analise'); };
+  if (Date.now() - a.inicio > 60 * 60000) return parar(); // desiste depois de 1 h
+  let e;
+  try { e = await (await fetch(`${SERVIDOR}/api/analise?data=${a.data}&turno=${encodeURIComponent(a.turno)}`)).json(); } catch { return; }
+  const hora = (ms) => new Date(ms).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  if (e.estado === 'esperando' && !a.avisos.esperando) {
+    a.avisos.esperando = true;
+    const falta = (e.faltam || []).join(', ');
+    await avisoAnalise(`Retomazera: análise ${a.nome} às ${hora(e.rodaEm)}`, falta ? `Esperando ${falta} (outro perfil do Chrome). Se não chegar, analisa assim mesmo às ${hora(e.rodaEm)}.` : 'Todas as fontes chegaram.', false);
+  } else if (e.estado === 'rodando' && !a.avisos.rodando) {
+    a.avisos.rodando = true;
+    await avisoAnalise(`Retomazera: analisando ${a.nome}…`, 'O Claude está lendo as conversas. Aviso quando terminar.', false);
+  } else if (e.estado === 'pronta') {
+    await avisoAnalise(`✅ Retomazera: análise ${a.nome} pronta`, `${e.resumo || 'Lista atualizada.'}
+${e.push ? '📲 Enviada ao celular.' : 'Lista atualizada no app (sem aviso no celular).'}`, true);
+    return parar();
+  } else if (e.estado === 'falhou') {
+    await avisoAnalise(`❌ Retomazera: a análise ${a.nome} falhou`, e.erro || 'Veja o server.log.', true);
+    return parar();
+  }
+  await chrome.storage.local.set({ acompanhar: a });
+}
 
 // Pasta da coleta = dia em que ela roda
 function hojeIso() {
@@ -138,7 +178,7 @@ async function avisarProgresso(c, origem, prog, fim, rodada) {
     : `Retomazera: coletando ${turno}${c.perfil ? ` · ${c.perfil}` : ''}`;
   const opcoes = { type: 'basic', iconUrl: 'icon.png', title: titulo, message: linhas.join('\n').slice(0, 500),
     priority: origem === 'ronda' ? 0 : 1, silent: !fim || origem === 'ronda', requireInteraction: false };
-  if (fim) opcoes.contextMessage = 'A análise roda no PC e o resumo chega no celular em alguns minutos.';
+  if (fim) opcoes.contextMessage = 'A análise roda no PC; aviso aqui quando ficar pronta e for enviada ao celular.';
   try {
     await chrome.notifications.clear('rz-coleta');
     await chrome.notifications.create('rz-coleta', opcoes);
@@ -253,6 +293,12 @@ async function coletar(origem, rodada = '') {
   } finally {
     if (janela) await chrome.windows.remove(janela.id).catch(() => {});
     if (ativas.length) await avisarProgresso(c, origem, prog, true, rodada);
+    // só o perfil principal (o do WhatsApp) acompanha a análise, para não avisar duas vezes
+    if (algumaOk && c.fontes.whatsapp) {
+      const turno = origem === 'noite' ? 'noite' : origem === 'ronda' ? `ronda:${rodada}` : '';
+      const nome = origem === 'noite' ? 'da noite' : origem === 'ronda' ? `da ronda das ${Number(rodada)}h` : 'do dia';
+      await comecarAcompanhar(data, turno, nome);
+    }
     if (origem === 'ronda') {
       const { autoRonda } = await chrome.storage.local.get('autoRonda');
       const r = autoRonda && autoRonda.dia === data ? autoRonda : { dia: data, slots: {} };
@@ -274,7 +320,7 @@ async function coletar(origem, rodada = '') {
 }
 
 chrome.notifications.onClicked.addListener((id) => {
-  if (id === 'rz-coleta') { chrome.tabs.create({ url: `${SERVIDOR}/` }); chrome.notifications.clear(id); }
+  if (id === 'rz-coleta' || id === 'rz-analise') { chrome.tabs.create({ url: `${SERVIDOR}/` }); chrome.notifications.clear(id); }
 });
 
 chrome.runtime.onMessage.addListener((msg, _s, responder) => {
