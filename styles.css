@@ -150,3 +150,6 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 .fv-erro { color: var(--alta); font-weight: 600; }
 .fv-botoes { margin-top: 14px; }
 .form-venda { color-scheme: light dark; }
+.btn-link { background: none; border: 0; padding: 2px 4px; font: inherit; font-size: 13px; font-weight: 600; color: var(--verde); cursor: pointer; }
+.edita-valor .acoes { margin: 6px 0 4px; }
+.valor-item { font: inherit; color: var(--texto); background: var(--fundo); border: 1px solid var(--borda); border-radius: 9px; padding: 7px 10px; width: 180px; }

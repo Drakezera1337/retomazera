@@ -142,12 +142,43 @@ function hojeIso() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+// valor de venda digitado pelo João (acoes['venda:...#i'].valor) vale mais que o que a análise achou;
+// o total acompanha a diferença
+function comValoresManuais(v) {
+  let delta = 0, mudou = false;
+  const itens = (v.itens || []).map((it, i) => {
+    const m = S.acoes[`${v._chave}#${i}`]?.valor;
+    if (m == null || m === '') return it;
+    mudou = true; delta += Number(m) - (Number(it.valor) || 0);
+    return { ...it, valor: Number(m), _manual: true, _original: it.valor };
+  });
+  if (!mudou) return v;
+  const base = Number(v.total) || (v.itens || []).reduce((s, it) => s + (Number(it.valor) || 0), 0);
+  return { ...v, itens, total: Math.round((base + delta) * 100) / 100 };
+}
+function salvarValorItem(chaveItem, txt) {
+  const n = String(txt || '').trim() === '' ? null : Number(String(txt).replace(/\./g, '').replace(',', '.'));
+  if (n != null && (isNaN(n) || n < 0)) { toast('Valor inválido'); return; }
+  S.editValor = '';
+  salvarAcoes({ [chaveItem]: { ...(S.acoes[chaveItem] || {}), valor: n, ts: Date.now() } });
+  toast(n == null ? 'Voltou ao valor da conversa' : `Valor de venda: ${brlV(n)}`);
+}
+function itemVendaHtml(v, i, it, concluida) {
+  const k = `${v._chave}#${i}`;
+  if (S.editValor === k) {
+    return `<li class="edita-valor">${esc(it.descricao)}<div class="acoes"><input class="valor-item" data-valor-item="${esc(k)}" inputmode="decimal" placeholder="R$ (vazio = o da conversa)" value="${esc(it.valor ? String(it.valor).replace('.', ',') : '')}">
+      <button class="btn btn-mini btn-verde" data-salvar-valor="${esc(k)}">✔ Salvar</button><button class="btn btn-mini" data-editar-valor="">✕</button></div></li>`;
+  }
+  const val = brlV(it.valor);
+  return `<li>${esc(it.descricao)}${val ? ` <span class="sub">— ${esc(val)}${it._manual ? ' (manual)' : ''}</span>` : ''}${concluida ? ''
+    : ` <button class="btn-link" data-editar-valor="${esc(k)}">${val ? '✏️ editar' : '✏️ pôr valor'}</button>`}</li>`;
+}
 function vendasMarcadas() {
   const porCliente = {};
   for (const dia of [...S.dias, ...S.noites].sort((a, b) => (a.geradoEm || 0) - (b.geradoEm || 0))) {
     for (const v of dia.agendadas || []) porCliente[chaveCliente(v)] = { ...v, _listaEm: dia.geradoEm };
   }
-  return Object.values(porCliente).map((v) => ({ ...v, _chave: `venda:${chaveCliente(v)}:${v.data}` }))
+  return Object.values(porCliente).map((v) => comValoresManuais({ ...v, _chave: `venda:${chaveCliente(v)}:${v.data}` }))
     .sort((a, b) => (a.data + (a.hora || '')).localeCompare(b.data + (b.hora || '')));
 }
 const brlV = (v) => (v == null || v === '' || isNaN(Number(v)) ? '' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
@@ -173,12 +204,12 @@ function blocoUnidadesVenda(v) {
       ${u.foto ? `<img src="${u.foto}" alt="" loading="lazy">` : `<div class="sem-foto">${ICONE_FAMILIA(u.familia)}</div>`}
       <div class="unidade-txt"><span class="sub">🎮 Vai este:</span> <b>${esc(u.nome || u.item)}</b>
         <div>${u.situacao === 'disponivel' ? '<span class="st-ok">✅ Disponível</span>' : '<span class="st-chegando">🚚 Chegando — ainda não está com você!</span>'}${S.acoes[chave]?.uid === u.uid ? ' 📌' : ''}</div>
-        <div>Custo <b>${brlV(u.custo) || '—'}</b>${brlV(it.valor) ? ` · Vendido por ${brlV(it.valor)}` : ''}${lucro != null ? ` · <span class="lucro">${lucro >= 0 ? '+' : ''}${brlV(lucro)}</span>` : ''}</div>
+        <div>Custo <b>${brlV(u.custo) || '—'}</b>${brlV(it.valor) ? ` · Vendido por ${brlV(it.valor)}` : ` · <button class="btn-link" data-editar-valor="${esc(chave)}">✏️ pôr valor de venda</button>`}${lucro != null ? ` · <span class="lucro">${lucro >= 0 ? '+' : ''}${brlV(lucro)}</span>` : ''}</div>
         ${troca}</div></div>`;
   }).join('');
 }
 function trocarUnidadeVenda(chaveItem, uid) {
-  salvarAcoes({ [chaveItem]: { uid, ts: Date.now() } });
+  salvarAcoes({ [chaveItem]: { ...(S.acoes[chaveItem] || {}), uid, ts: Date.now() } });
   toast('Videogame da venda trocado');
 }
 function cartaoVenda(v) {
@@ -195,7 +226,7 @@ function cartaoVenda(v) {
       ${st.concluida ? `<span class="chip vend">Concluída</span>${seloGestao(v._chave)}` : v.status === 'a confirmar' ? '<span class="chip media">A confirmar</span>' : '<span class="chip vend">Confirmada</span>'}
     </div>
     <p><b>${atrasada ? `⚠️ Era ${esc(dataBR(v.data, false))}` : v.data === hojeIso() ? 'Hoje' : esc(dataBR(v.data))}${v.hora ? ` · 🕒 ${esc(v.hora)}` : ''}</b>${v.local ? ` · 📍 ${esc(v.local)}` : ''}${v.entrega ? ` <span class="sub">(${esc(v.entrega)})</span>` : ''}</p>
-    ${(v.itens || []).length ? `<ul class="venda-itens">${v.itens.map((i) => `<li>${esc(i.descricao)}${brlV(i.valor) ? ` <span class="sub">— ${esc(brlV(i.valor))}</span>` : ''}</li>`).join('')}</ul>` : ''}
+    ${(v.itens || []).length ? `<ul class="venda-itens">${v.itens.map((it, i) => itemVendaHtml(v, i, it, st.concluida)).join('')}</ul>` : ''}
     ${blocoUnidadesVenda(v)}
     ${brlV(v.total) ? `<p class="venda-total">Total: <b>${esc(brlV(v.total))}</b></p>` : ''}
     ${v.pagamento ? `<p>💳 ${esc(v.pagamento)}</p>` : ''}
@@ -1162,6 +1193,10 @@ function rotear() {
   if (aba === 'ajustes') ligarAjustes();
 }
 document.addEventListener('click', async (e) => {
+  const ev = e.target.closest('[data-editar-valor]');
+  if (ev) { S.editValor = ev.dataset.editarValor; rotear(); setTimeout(() => { const i = document.querySelector('.valor-item'); i?.focus(); i?.select(); }, 30); return; }
+  const sv = e.target.closest('[data-salvar-valor]');
+  if (sv) { salvarValorItem(sv.dataset.salvarValor, document.querySelector(`[data-valor-item="${CSS.escape(sv.dataset.salvarValor)}"]`)?.value); return; }
   const fv = e.target.closest('[data-fv]');
   if (fv) { e.preventDefault(); acaoFormVenda(fv); return; }
   const cg = e.target.closest('[data-corrigir-venda]');
@@ -1196,6 +1231,11 @@ document.addEventListener('click', async (e) => {
 document.addEventListener('submit', (e) => {
   const f = e.target.closest('.form-venda');
   if (f) { e.preventDefault(); enviarFormVenda(f.closest('.modal')); }
+});
+document.addEventListener('keydown', (e) => {
+  const i = e.target.closest('[data-valor-item]');
+  if (i && e.key === 'Enter') salvarValorItem(i.dataset.valorItem, i.value);
+  if (i && e.key === 'Escape') { S.editValor = ''; rotear(); }
 });
 document.addEventListener('input', (e) => { const it = e.target.closest('.fv-item'); if (it) atualizarItemVenda(it); });
 document.addEventListener('change', (e) => {
