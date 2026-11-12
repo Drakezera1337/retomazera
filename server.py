@@ -202,7 +202,14 @@ def registrar_ofertas(lista, origem_data):
                   "preco": preco, "precoTexto": txt("precoTexto", 120), "situacao": txt("situacao", 400),
                   "mensagem": txt("mensagem", 600), "ultimaMsg": txt("ultimaMsg", 300), "quando": txt("quando", 20),
                   "desde": antigo.get("desde") or origem_data, "atualizado": origem_data, "ts": agora}
+        guardar_fotos_oferta(reg[k], fotos_whatsapp_do_contato(reg[k]["contato"], sorted({origem_data, date.today().isoformat()})))
     limite = (date.today() - timedelta(days=30)).isoformat()
+    for k in [k for k, v in reg.items() if (v.get("atualizado") or "") < limite]:
+        for rel in reg[k].get("fotos") or []:
+            try:
+                os.remove(os.path.join(PASTA_FOTOS_OFERTAS, rel))
+            except OSError:
+                pass
     reg = {k: v for k, v in reg.items() if (v.get("atualizado") or "") >= limite}
     with _lock:
         tmp = OFERTAS + ".tmp"
@@ -210,6 +217,100 @@ def registrar_ofertas(lista, origem_data):
             json.dump(reg, f, ensure_ascii=False, indent=1)
         os.replace(tmp, OFERTAS)
     return reg
+
+
+PASTA_FOTOS_OFERTAS = os.path.join(BASE_DIR, "fotos_ofertas")  # fotos que o cliente mandou (fora do git)
+FOTOS_POR_OFERTA = 4
+
+
+def fotos_whatsapp_do_contato(contato, datas):
+    """Fotos (data URL JPEG) que o contato mandou, nas coletas do WhatsApp dessas datas (dia, noite e rondas)."""
+    dig = re.sub(r"\D", "", str(contato or ""))[-8:]
+    if len(dig) < 8:
+        return []
+    achadas = []
+    for data in datas:
+        base = os.path.join(PASTA_COLETAS, data)
+        arquivos = [os.path.join(base, "whatsapp.json"), os.path.join(base, "noite", "whatsapp.json")]
+        rondas = os.path.join(base, "rondas")
+        if os.path.isdir(rondas):
+            arquivos += [os.path.join(rondas, r, "whatsapp.json") for r in sorted(os.listdir(rondas))]
+        for arq in arquivos:
+            try:
+                with open(arq, encoding="utf-8") as f:
+                    c = json.load(f)
+            except (OSError, ValueError):
+                continue
+            for cv in c.get("conversas") or []:
+                if re.sub(r"\D", "", str(cv.get("contato") or ""))[-8:] != dig:
+                    continue
+                for m in cv.get("mensagens") or []:
+                    if m.get("foto") and not m.get("eu") and str(m["foto"]).startswith("data:image/jpeg;base64,"):
+                        achadas.append((f"{m.get('data') or ''} {m.get('hora') or ''}", m["foto"]))
+    return achadas
+
+
+def guardar_fotos_oferta(o, achadas):
+    """Grava as fotos novas em fotos_ofertas/<id da oferta>/ e mantém as 4 mais recentes. True se mudou."""
+    import base64
+    import hashlib
+    if not achadas:
+        return False
+    pasta = os.path.join(PASTA_FOTOS_OFERTAS, hashlib.sha1(o["chave"].encode()).hexdigest()[:12])
+    os.makedirs(pasta, exist_ok=True)
+    atuais = list(o.get("fotos") or [])
+    mudou = False
+    for quando, url in sorted(achadas):
+        bruto = base64.b64decode(url.split(",", 1)[1])
+        nome = hashlib.sha1(bruto).hexdigest()[:12] + ".jpg"
+        rel = os.path.basename(pasta) + "/" + nome
+        if rel in atuais:
+            continue
+        with open(os.path.join(pasta, nome), "wb") as f:
+            f.write(bruto)
+        atuais.append(rel)
+        mudou = True
+    if mudou:
+        for velho in atuais[:-FOTOS_POR_OFERTA]:
+            try:
+                os.remove(os.path.join(PASTA_FOTOS_OFERTAS, velho))
+            except OSError:
+                pass
+        o["fotos"] = atuais[-FOTOS_POR_OFERTA:]
+    return mudou
+
+
+def anexar_fotos_ofertas(data):
+    """Depois de cada coleta do WhatsApp: junta às ofertas em aberto as fotos que o vendedor mandou."""
+    reg = ler_ofertas()
+    mudou = False
+    for o in reg.values():
+        if guardar_fotos_oferta(o, fotos_whatsapp_do_contato(o.get("contato"), [data])):
+            mudou = True
+    if mudou:
+        with _lock:
+            tmp = OFERTAS + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(reg, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, OFERTAS)
+    return mudou
+
+
+def fotos_ofertas_publicas():
+    """{chave da oferta: [data URL, ...]} para o celular (arquivo separado no Gist: fotos_ofertas.json)."""
+    import base64
+    saida = {}
+    for k, o in ler_ofertas().items():
+        urls = []
+        for rel in o.get("fotos") or []:
+            try:
+                with open(os.path.join(PASTA_FOTOS_OFERTAS, rel), "rb") as f:
+                    urls.append("data:image/jpeg;base64," + base64.b64encode(f.read()).decode())
+            except OSError:
+                pass
+        if urls:
+            saida[k] = urls
+    return saida
 
 
 def ofertas_publicas():
@@ -693,8 +794,12 @@ def _publicar_gist():
     corpo = {"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "retornos": retornos_publicos(),
              "espera": espera_publica(), "estoque": estoque_fila(), "ofertas": ofertas_publicas(), "precos": precos_referencia(),
              "ts": int(time.time() * 1000)}
-    gist_request("PATCH", {"files": {"lembretes.json": {"content": json.dumps(corpo, ensure_ascii=False)}}})
-    _gist_pendente.update(pendente=False, ate=0)
+    arquivos = {"lembretes.json": {"content": json.dumps(corpo, ensure_ascii=False)}}
+    fotos = json.dumps(fotos_ofertas_publicas())
+    if fotos != _gist_pendente.get("fotos"):  # fotos pesam: só vão quando mudam (no mesmo PATCH)
+        arquivos["fotos_ofertas.json"] = {"content": fotos}
+    gist_request("PATCH", {"files": arquivos})
+    _gist_pendente.update(pendente=False, ate=0, fotos=fotos)
     return True
 
 
@@ -880,6 +985,11 @@ def salvar_coleta(corpo):
         lotes[str(corpo.get("perfil") or "?")] = [f for f in corpo["lote"] if f in NOMES_FONTES]
         gravar_dados(fontes_perfis=lotes)
     gerar_texto(data, turno)
+    if fonte == "whatsapp":
+        try:
+            anexar_fotos_ofertas(data)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ofertas] fotos: {exc}")
     return len(corpo.get("conversas") or [])
 
 
@@ -1391,7 +1501,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json({"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "acoes": ler_acoes(),
                                "retornos": retornos_publicos(),
                                "espera": espera_publica(), "estoque": estoque_fila(), "ofertas": ofertas_publicas(), "precos": precos_referencia(),
-                               "ts": int(time.time() * 1000)})
+                               "fotosOfertas": fotos_ofertas_publicas(), "ts": int(time.time() * 1000)})
         if path == "/api/coletas":
             data = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("data", [""])[0]
             return self._json({f: {"conversas": len(c.get("conversas") or []), "erro": c.get("erro"), "coletadoEm": c.get("coletadoEm")}

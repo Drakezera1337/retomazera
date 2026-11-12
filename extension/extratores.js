@@ -302,7 +302,32 @@ async function extrairWhatsapp(desde, ignorar = [], limite = 60, opcoes = {}) {
     const mapa = new Map(); let ordem = [];
     const chave = (x) => x.querySelector('[data-id]')?.getAttribute('data-id') || '';
     const pr = () => pane.getBoundingClientRect();
+    // foto que o CLIENTE mandou: copia a imagem já mostrada na tela (blob/data, mesma origem) reduzida para
+    // ~480 px em JPEG. Só leitura do que está na tela; não baixa nada pelo WhatsApp.
+    const ladoCliente = (x) => {
+      const mc = x.querySelector('[data-testid="msg-container"]') || x;
+      const r = mc.getBoundingClientRect(), p = pr();
+      return (r.left + r.right) / 2 <= (p.left + p.right) / 2;
+    };
+    const capturarFoto = (x) => {
+      const imgs = [...x.querySelectorAll('img')].filter((i) => i.complete && i.naturalWidth >= 150 && i.naturalHeight >= 150
+        && /^(blob:|data:image)/.test(i.src || ''));
+      if (!imgs.length || !ladoCliente(x)) return '';
+      const img = imgs.sort((a, b) => b.naturalWidth * b.naturalHeight - a.naturalWidth * a.naturalHeight)[0];
+      try {
+        const esc = Math.min(1, 480 / Math.max(img.naturalWidth, img.naturalHeight));
+        const cv = document.createElement('canvas');
+        cv.width = Math.round(img.naturalWidth * esc); cv.height = Math.round(img.naturalHeight * esc);
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        return cv.toDataURL('image/jpeg', 0.62);
+      } catch { return ''; }
+    };
     const parse = (x) => {
+      const p0 = parse0(x);
+      if (p0 && x.querySelector('img')) { const f = capturarFoto(x); if (f) p0.foto = f; else p0.temImg = true; }
+      return p0;
+    };
+    const parse0 = (x) => {
       const c = x.querySelector('[data-pre-plain-text]');
       if (c) {
         const m = c.getAttribute('data-pre-plain-text').match(/\[([^\]]+)\] (.*?):\s*$/);
@@ -323,6 +348,7 @@ async function extrairWhatsapp(desde, ignorar = [], limite = 60, opcoes = {}) {
         const k = chave(x); if (!k) continue;
         S.push(k);
         if (!mapa.has(k)) { const p = parse(x); if (p) mapa.set(k, p); }
+        else if (mapa.get(k).temImg) { const f = capturarFoto(x); if (f) { mapa.get(k).foto = f; delete mapa.get(k).temImg; } }
       }
       if (!ordem.length) { ordem = S; return S.length; }
       const vistos = new Set(ordem); const j = S.findIndex((k) => vistos.has(k));
@@ -392,8 +418,11 @@ async function extrairWhatsapp(desde, ignorar = [], limite = 60, opcoes = {}) {
         const d = dataDe(m.h); if (d) ultimaData = d;
         const hora = (m.h.match(/^(\d{1,2}:\d{2})/) || [])[1] || m.h;
         const eu = /Gamezeraofc/i.test(m.autor);
-        return { data: d || ultimaData, hora, eu, autor: eu ? 'João' : (m.autor || c.nm), texto: (m.texto || '').slice(0, 1500) };
+        return { data: d || ultimaData, hora, eu, autor: eu ? 'João' : (m.autor || c.nm), texto: ((m.foto && !eu && !/^\[foto/.test(m.texto || '') ? '[foto] ' : '') + (m.texto || '')).slice(0, 1500),
+          ...(m.foto && !eu ? { foto: m.foto } : {}) };
       });
+      // no máximo as 4 fotos mais recentes do cliente por conversa
+      msgs.filter((m) => m.foto).slice(0, -4).forEach((m) => { delete m.foto; });
       if (!msgs.some((m) => m.data && noPeriodo(m.data, m.hora))) continue; // nenhuma mensagem no período (ex.: só abriu)
       conversas.push({ nome: c.nm || r.titulo, contato: c.ph, mensagens: msgs.slice(-80) });
     } catch (e) {

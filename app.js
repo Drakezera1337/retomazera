@@ -7,7 +7,7 @@ const K = { cache: 'retomazera:cache', push: 'retomazera:push', acoesPendentes: 
 const lerJSON = (k, p) => { try { return JSON.parse(localStorage.getItem(k)) ?? p; } catch { return p; } };
 const gravarJSON = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem storage */ } };
 
-const S = { dias: [], semanas: [], noites: [], retornos: [], espera: [], estoque: [], ofertas: [], precos: {}, acoes: {}, cards: {}, mostrarExcluidos: false, ts: 0, status: null, carregando: false, erro: '' };
+const S = { dias: [], semanas: [], noites: [], retornos: [], espera: [], estoque: [], ofertas: [], precos: {}, fotosOfertas: {}, acoes: {}, cards: {}, mostrarExcluidos: false, ts: 0, status: null, carregando: false, erro: '' };
 
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.hidden = false;
@@ -39,10 +39,11 @@ async function carregar() {
   try {
     if (NO_PC) {
       const r = await api('lembretes');
-      S.dias = r.dias || []; S.semanas = r.semanas || []; S.noites = r.noites || []; S.retornos = r.retornos || []; S.espera = r.espera || []; S.estoque = r.estoque || []; S.ofertas = r.ofertas || []; S.precos = r.precos || {}; S.acoes = r.acoes || {}; S.ts = r.ts;
+      S.dias = r.dias || []; S.semanas = r.semanas || []; S.noites = r.noites || []; S.retornos = r.retornos || []; S.espera = r.espera || []; S.estoque = r.estoque || []; S.ofertas = r.ofertas || []; S.precos = r.precos || {}; S.fotosOfertas = r.fotosOfertas || {}; S.acoes = r.acoes || {}; S.ts = r.ts;
       S.status = await api('status');
     } else if (Sync.enabled()) {
-      const { 'lembretes.json': l, 'acoes.json': ac } = await Sync.ler({ 'lembretes.json': { dias: [] }, 'acoes.json': {} });
+      const { 'lembretes.json': l, 'acoes.json': ac, 'fotos_ofertas.json': fo } = await Sync.ler({ 'lembretes.json': { dias: [] }, 'acoes.json': {}, 'fotos_ofertas.json': {} });
+      S.fotosOfertas = fo || {};
       S.dias = l.dias || []; S.semanas = l.semanas || []; S.noites = l.noites || []; S.retornos = l.retornos || []; S.espera = l.espera || []; S.estoque = l.estoque || []; S.ofertas = l.ofertas || []; S.precos = l.precos || {}; S.ts = l.ts || 0;
       S.acoes = juntarAcoes(ac || {}, lerJSON(K.acoesPendentes, {}));
       gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, noites: S.noites, retornos: S.retornos, espera: S.espera, estoque: S.estoque, ofertas: S.ofertas, precos: S.precos, acoes: S.acoes, ts: S.ts });
@@ -438,6 +439,7 @@ function cartaoOferta(o) {
     ${o.precoTexto && o.preco ? `<p class="sub">💬 ${esc(o.precoTexto)}</p>` : ''}
     ${o.detalhes ? `<p>📝 ${esc(o.detalhes)}</p>` : ''}
     ${o.situacao ? `<p><span class="rot">Onde parou</span>${esc(o.situacao)}</p>` : ''}
+    ${(S.fotosOfertas[o.chave] || []).length ? `<div class="fotos-oferta">${S.fotosOfertas[o.chave].map((f, i) => `<img src="${f}" alt="Foto ${i + 1} enviada pelo cliente" loading="lazy" data-ampliar="${esc(o.chave)}" data-i="${i}">`).join('')}</div>` : ''}
     ${refTxt}
     ${o.ultimaMsg ? `<p class="sub">“${esc(o.ultimaMsg)}”${o.quando ? ` · ${esc(o.quando)}` : ''} · ${esc(dataBR(o.atualizado, false))}</p>` : ''}
     ${o.mensagem ? `<div class="msg">${esc(o.mensagem)}</div>` : ''}
@@ -450,6 +452,15 @@ function cartaoOferta(o) {
       <button class="btn btn-mini ${st.descartada ? 'ligado' : ''}" data-oferta="descartada" data-chave="${esc(o.chave)}">${st.descartada ? '↩️ Voltar' : '🗑️ Descartar'}</button>
     </div>
   </div>`;
+}
+function ampliarFoto(chave, i) {
+  const fotos = S.fotosOfertas[chave] || [];
+  if (!fotos[i]) return;
+  document.querySelector('.foto-grande')?.remove();
+  const d = document.createElement('div');
+  d.className = 'foto-grande';
+  d.innerHTML = `<img src="${fotos[i]}" alt=""><span>${i + 1} de ${fotos.length} · toque para fechar</span>`;
+  document.body.appendChild(d);
 }
 function marcarOferta(chave, campo) {
   const k = `oferta:${chave}`, atual = S.acoes[k] || {};
@@ -904,6 +915,9 @@ document.addEventListener('click', async (e) => {
     try { await navigator.clipboard.writeText(x?.mensagem || ''); toast('Mensagem copiada'); } catch { toast('Não consegui copiar'); }
     return;
   }
+  const amp = e.target.closest('[data-ampliar]');
+  if (amp) { ampliarFoto(amp.dataset.ampliar, Number(amp.dataset.i)); return; }
+  if (e.target.closest('.foto-grande')) { e.target.closest('.foto-grande').remove(); return; }
   const of = e.target.closest('[data-oferta]');
   if (of) { marcarOferta(of.dataset.chave, of.dataset.oferta); return; }
   const mv = e.target.closest('[data-mover]');
