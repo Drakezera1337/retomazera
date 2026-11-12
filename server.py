@@ -471,35 +471,82 @@ def estoque_fila(reg=None):
     return unidades
 
 
+def cliente_fora_da_fila(acoes, k, e):
+    a = acoes.get(k.split("|")[0], {})
+    if a.get("excluido"):
+        return True
+    # vendido DEPOIS de entrar na fila = comprou (sai da fila); vendido antes = cliente antigo esperando outro
+    if a.get("vendido"):
+        vend = time.strftime("%Y-%m-%d", time.localtime((a.get("vendidoEm") or a.get("ts") or 0) / 1000))
+        return vend >= (e.get("desde") or "")
+    return False
+
+
+def alocar_disponiveis(reg, unidades, acoes):
+    """Igual ao app: venda marcada reserva primeiro; depois vínculo manual; depois a ordem da fila
+    (acoes['ordem:<modelo>']), pulando o que o João desvinculou. Só unidades DISPONÍVEIS. Devolve {chave: unidade}."""
+    disp = [u for u in unidades if u.get("situacao") == "disponivel"]
+    reservadas = set()
+    itens = sorted({k for u in disp for k in u.get("atende") or [] if k.startswith("venda:")})
+    for k in itens:  # manual primeiro
+        uid = acoes.get(k, {}).get("uid")
+        if uid and uid not in reservadas and any(u["uid"] == uid for u in disp):
+            reservadas.add(uid)
+    for k in itens:
+        if acoes.get(k, {}).get("uid") in reservadas:
+            continue
+        cand = [u for u in disp if u["uid"] not in reservadas and k in (u.get("atende") or [])]
+        if cand:
+            reservadas.add(cand[0]["uid"])
+    ativos = [(k, e) for k, e in reg.items() if not cliente_fora_da_fila(acoes, k, e)]
+    def pos(item):
+        k, e = item
+        lista = acoes.get("ordem:" + (e.get("familia") or ""), {}).get("lista") or []
+        return (lista.index(k) if k in lista else 10 ** 6, e.get("desde") or "")
+    ativos.sort(key=pos)
+    dono, usados = {}, set(reservadas)
+    manuais = []
+    for k, e in ativos:
+        v = (acoes.get(k.split("|")[0], {}).get("vinculos") or {}).get(e.get("familia"))
+        if v and v.get("uid") not in usados and any(u["uid"] == v.get("uid") for u in disp):
+            manuais.append((v.get("em") or 0, k, v["uid"]))
+    for _, k, uid in sorted(manuais, reverse=True):
+        if k not in dono and uid not in usados:
+            dono[k] = next(u for u in disp if u["uid"] == uid)
+            usados.add(uid)
+    for k, e in ativos:
+        if k in dono:
+            continue
+        fora = set(acoes.get(k.split("|")[0], {}).get("semUnidade") or [])
+        u = next((u for u in disp if u["uid"] not in usados and u["uid"] not in fora and k in (u.get("atende") or [])), None)
+        if u:
+            dono[k] = u
+            usados.add(u["uid"])
+    return dono
+
+
 def verificar_espera(notificar=True):
-    """Cruza a fila com o estoque; cliente com o modelo disponível ganha 'chegou' e vira notificação (1x por item)."""
+    """Videogame que ficou DISPONÍVEL vai para o primeiro da fila (ordem do João); só esse cliente ganha
+    'chegou' e a notificação (1x por unidade)."""
     reg = ler_espera()
     if not reg:
         return []
-    estoque = estoque_disponivel()
     acoes = ler_acoes()
+    dono = alocar_disponiveis(reg, estoque_fila(reg), acoes)
     novos = []
     for k, e in reg.items():
-        cliente = acoes.get(k.split("|")[0], {})
-        if cliente.get("excluido"):
-            continue
-        disp = [i for i in estoque if i["familia"] == e.get("familia") and atende(e, i)]
-        if not disp:
+        u = dono.get(k)
+        if not u:
             if e.get("chegou"):
-                e["chegou"] = None  # o item foi vendido para outra pessoa: volta a esperar
+                e["chegou"] = None  # a unidade foi para outro (venda, ordem da fila) ou saiu do estoque
             continue
         avisados = set(e.get("avisados") or [])
-        novo = next((i for i in disp if i["uid"] not in avisados), None)
-        opcoes = [{"item": i["item"], "preco": i["preco"]} for i in disp]
-        if e.get("chegou"):
-            e["chegou"]["opcoes"] = opcoes  # todas as unidades do modelo em estoque (o João escolhe a que combina)
-        if not e.get("chegou") or novo:
-            item = novo or disp[0]
-            e["chegou"] = {"uid": item["uid"], "item": item["item"], "preco": item["preco"], "em": int(time.time() * 1000),
-                           "opcoes": opcoes}
-            if novo:
-                e["avisados"] = sorted(avisados | {novo["uid"]})
-                novos.append(e)
+        opcoes = [{"item": u["item"], "preco": u["preco"]}]
+        if not e.get("chegou") or e["chegou"].get("uid") != u["uid"]:
+            e["chegou"] = {"uid": u["uid"], "item": u["item"], "preco": u["preco"], "em": int(time.time() * 1000), "opcoes": opcoes}
+        if u["uid"] not in avisados:
+            e["avisados"] = sorted(avisados | {u["uid"]})
+            novos.append(e)
     gravar_espera(reg)
     if novos and notificar:
         por_familia = {}
@@ -507,8 +554,8 @@ def verificar_espera(notificar=True):
             por_familia.setdefault(e["familia"], []).append(e)
         for fam, lista in por_familia.items():
             nomes = ", ".join(x.get("nome") or "?" for x in lista[:4]) + (f" e mais {len(lista) - 4}" if len(lista) > 4 else "")
-            enviar_push({"title": f"🔔 Chegou {fam}! {len(lista)} cliente{'s' if len(lista) > 1 else ''} esperando",
-                         "body": f"{nomes} — {lista[0]['chegou']['item']}", "tag": "retomazera-espera-" + fam, "data": "espera"})
+            enviar_push({"title": f"🔔 Chegou {fam}! Vez de {nomes}"[:90],
+                         "body": f"{lista[0]['chegou']['item']} — o primeiro da fila", "tag": "retomazera-espera-" + fam, "data": "espera"})
         try:
             publicar_gist()
         except Exception as exc:  # noqa: BLE001
