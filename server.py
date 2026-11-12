@@ -160,6 +160,86 @@ def registrar_retornos(lista, origem_data):
     return reg
 
 
+# --------------------------------------------------------------------------- ofertas (gente querendo VENDER ao João)
+OFERTAS = os.path.join(BASE_DIR, "ofertas.json")  # só WhatsApp; fora do git
+
+
+def ler_ofertas():
+    try:
+        with open(OFERTAS, encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def registrar_ofertas(lista, origem_data):
+    """Oferta = alguém no WhatsApp querendo vender um videogame ao João. Chave: cliente + modelo.
+    A mais nova vale; some 30 dias depois da última conversa."""
+    reg = ler_ofertas()
+    agora = int(time.time() * 1000)
+    for x in lista or []:
+        if not isinstance(x, dict) or str(x.get("canal") or "whatsapp").lower() != "whatsapp":
+            continue
+        x = {**x, "canal": "whatsapp"}
+        produto = str(x.get("produto") or "")[:80]
+        if not produto:
+            continue
+        k = chave_cliente(x) + "|" + (familia(produto) or produto.lower())
+        antigo = reg.get(k, {})
+        txt = lambda c, n: str(x.get(c) or "")[:n]
+        try:
+            preco = float(x["preco"]) if x.get("preco") not in (None, "") else None
+        except (TypeError, ValueError):
+            preco = None
+        reg[k] = {**antigo, "chave": k, "nome": txt("nome", 80), "canal": "whatsapp", "contato": txt("contato", 40),
+                  "produto": produto, "familia": familia(produto), "detalhes": txt("detalhes", 400),
+                  "preco": preco, "precoTexto": txt("precoTexto", 120), "situacao": txt("situacao", 400),
+                  "mensagem": txt("mensagem", 600), "ultimaMsg": txt("ultimaMsg", 300), "quando": txt("quando", 20),
+                  "desde": antigo.get("desde") or origem_data, "atualizado": origem_data, "ts": agora}
+    limite = (date.today() - timedelta(days=30)).isoformat()
+    reg = {k: v for k, v in reg.items() if (v.get("atualizado") or "") >= limite}
+    with _lock:
+        tmp = OFERTAS + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(reg, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, OFERTAS)
+    return reg
+
+
+def ofertas_publicas():
+    return sorted(ler_ofertas().values(), key=lambda v: v.get("ts") or 0, reverse=True)
+
+
+def precos_referencia():
+    """Por modelo, da Gestão: quanto o João costuma PAGAR (últimas 10 compras, sem defeito/peça) e por quanto VENDE
+    (vendas dos últimos 120 dias). Ajuda a decidir a oferta."""
+    try:
+        c = sqlite3.connect(GESTAO_DB, uri=True, timeout=10)
+        linhas = c.execute("select coalesce(nullif(trim(console_nome),''),nome), nome, preco_compra, custo_reparo, reparo, "
+                           "preco_venda, data_venda, data_compra from produtos order by data_compra desc").fetchall()
+        c.close()
+    except sqlite3.Error as exc:
+        print(f"[ofertas] não consegui ler a Gestão: {exc}")
+        return {}
+    nao = re.compile(r"\b(controle|jogo|cabo|fonte|capa|headset|pe[cç]a|placa|sucata|defeito|feira do rolo)\b", re.I)
+    limite = (date.today() - timedelta(days=120)).isoformat()
+    compras, vendas = {}, {}
+    for console, nome, pc, cr, reparo, pv, dv, dc in linhas:
+        fam = familia(f"{console} {nome}")
+        if not fam or nao.search(str(nome).split("|")[0]):
+            continue
+        custo = float(pc or 0) + float(cr or 0)
+        if custo > 0 and not reparo and len(compras.setdefault(fam, [])) < 10:
+            compras[fam].append(custo)
+        if dv and dv >= limite and pv:
+            vendas.setdefault(fam, []).append(float(pv))
+    media = lambda l: round(sum(l) / len(l)) if l else None
+    return {f: {"compra": media(compras.get(f, [])), "venda": media(vendas.get(f, [])),
+                "nCompra": len(compras.get(f, [])), "nVenda": len(vendas.get(f, []))}
+            for f in set(compras) | set(vendas)}
+
+
 def retornos_publicos():
     return sorted(ler_retornos().values(), key=lambda v: v.get("data", ""))
 
@@ -535,7 +615,7 @@ def publicar_gist():
     if not gist_cfg():
         return False
     corpo = {"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "retornos": retornos_publicos(),
-             "espera": espera_publica(), "estoque": estoque_fila(),
+             "espera": espera_publica(), "estoque": estoque_fila(), "ofertas": ofertas_publicas(), "precos": precos_referencia(),
              "ts": int(time.time() * 1000)}
     gist_request("PATCH", {"files": {"lembretes.json": {"content": json.dumps(corpo, ensure_ascii=False)}}})
     return True
@@ -636,6 +716,7 @@ def salvar_dia(corpo):
     limpos = salvar_dia_itens(itens, data)
     agendadas = limpar_agendadas(corpo.get("agendadas") or [])
     registrar_retornos(corpo.get("retornos") or [], data)
+    registrar_ofertas(corpo.get("ofertas") or [], data)
     try:
         registrar_espera(corpo.get("espera") or [], data)
     except Exception as exc:  # noqa: BLE001
@@ -872,7 +953,8 @@ def agendar_analise(data, turno=""):
         t.daemon = True
         _analise[chave_timer] = t
         t.start()
-    print(f"[análise{' noite' if turno else ''}] {data}: {'todas as fontes chegaram' if completas else 'esperando as outras fontes'}; roda em {int(atraso)} s")
+    rot = " noite" if turno == "noite" else f" ronda {turno.split(':')[1]}h" if turno else ""
+    print(f"[análise{rot}] {data}: {'todas as fontes chegaram' if completas else 'esperando as outras fontes'}; roda em {int(atraso)} s")
 
 
 def analisar(data, notificar=True, forcar=False):
@@ -1009,6 +1091,8 @@ def juntar_ronda(data, rodada, corpo):
         dia.setdefault("rondas", []).append({"hora": rodada + "h", "resumo": str(corpo["resumo"])[:600], "em": agora})
         dia["rondas"] = dia["rondas"][-8:]
     registrar_retornos(corpo.get("retornos") or [], data)
+    mudou += len([x for x in corpo.get("ofertas") or [] if isinstance(x, dict)])
+    registrar_ofertas(corpo.get("ofertas") or [], data)
     try:
         registrar_espera(corpo.get("espera") or [], data)
     except Exception as exc:  # noqa: BLE001
@@ -1227,7 +1311,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/lembretes":
             return self._json({"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "acoes": ler_acoes(),
                                "retornos": retornos_publicos(),
-                               "espera": espera_publica(), "estoque": estoque_fila(),
+                               "espera": espera_publica(), "estoque": estoque_fila(), "ofertas": ofertas_publicas(), "precos": precos_referencia(),
                                "ts": int(time.time() * 1000)})
         if path == "/api/coletas":
             data = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("data", [""])[0]

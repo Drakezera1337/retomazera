@@ -18,14 +18,15 @@ O QUE DEVOLVER (só o que mudou por causa das conversas novas):
 - "agendadas": vendas marcadas NOVAS ou que MUDARAM (dia, hora, local, valor, pagamento), item completo como no analise_prompt.md.
 - "cancelar_agendadas": vendas marcadas que foram desmarcadas: [{"nome","canal","contato"}].
 - "espera" e "retornos": só os novos ou alterados, mesmo formato do analise_prompt.md.
+- "ofertas": SÓ do WhatsApp, gente querendo VENDER videogame para o João (nova oferta ou mudou preço/estado/negociação), mesmo formato do analise_prompt.md.
 - "resumo": 1 a 2 frases do que mudou nessa ronda (ex.: "Maycon confirmou o PS5 para amanhã às 18h; 2 clientes novos perguntando do Series S.").
-- "avisar": true SÓ se valer a pena notificar o celular agora: cliente quente novo, pergunta sem resposta que pode perder venda, venda marcada ou desmarcada, cliente de volta querendo fechar. Mudança pequena (só "ok", "obrigado", conversa que já foi respondida pelo João) → false.
+- "avisar": true SÓ se valer a pena notificar o celular agora: cliente quente novo, oferta boa de videogame para comprar, pergunta sem resposta que pode perder venda, venda marcada ou desmarcada, cliente de volta querendo fechar. Mudança pequena (só "ok", "obrigado", conversa que já foi respondida pelo João) → false.
 - "titulo": se avisar, uma frase curta para a notificação (ex.: "Maycon confirmou o PS5 · 2 novos no Series S").
 Se nada mudou, devolva listas vazias, "avisar": false e um resumo curto.
 
 SAÍDA: grave com a ferramenta Write o arquivo coletas\{DATA}\rondas\{RODADA}\resultado.json:
 {
   "resumo": "...", "avisar": false, "titulo": "",
-  "itens": [], "remover": [], "agendadas": [], "cancelar_agendadas": [], "espera": [], "retornos": []
+  "itens": [], "remover": [], "agendadas": [], "cancelar_agendadas": [], "espera": [], "retornos": [], "ofertas": []
 }
 No fim, escreva uma linha com o que mudou.

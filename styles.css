@@ -99,3 +99,5 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 .chip.ronda { background: #e3f1ff; color: #0b5cad; }
 @media (prefers-color-scheme: dark) { .chip.ronda { background: #12324f; color: #9cd0ff; } }
 .painel.rondas p { margin: 0 0 6px; font-size: 14px; } .painel.rondas p:last-child { margin: 0; }
+.ref-preco { background: var(--fundo); border-radius: 10px; padding: 8px 10px; font-size: 14px; }
+.prejuizo { color: var(--alta); }

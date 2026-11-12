@@ -56,6 +56,8 @@ VENDAS MARCADAS (separado da lista de retomada): procure nas conversas vendas qu
 Inclua vendas marcadas para hoje E para os próximos dias. Não invente valores: use só o que foi combinado na conversa (se o valor não apareceu, deixe "total": null e diga em "observacoes").
 Quem tem venda marcada NÃO precisa aparecer também na lista de retomada, a não ser que falte confirmar algo importante.
 
+OFERTAS PARA COMPRAR (separado de tudo acima; SÓ conversas do WhatsApp): gente querendo VENDER um videogame (ou celular/acessório de valor) para o João — "tenho um PS4 pra vender", "quanto você paga no meu Xbox?", "compra PS5?". Para cada uma, monte um item em "ofertas" com: nome, "canal": "whatsapp", contato (telefone só com dígitos), "produto" (o modelo, o mais específico possível: "PS4 Slim 1TB", "Xbox One S"), "detalhes" (estado, defeitos, controles, caixa, jogos, armazenamento, se é desbloqueado, onde está — o que a pessoa contou), "preco" (número que a pessoa PEDIU, ou null se não falou), "precoTexto" (como ela falou, ex.: "quer R$ 900 ou troca", "aceita oferta"), "situacao" (onde a negociação parou: o João ofereceu quanto? ficou de ver? pediu foto?), "mensagem" (sugestão de resposta no estilo do João para avançar: pedir fotos/vídeo funcionando, perguntar o que acompanha, fazer a oferta se já der), "ultimaMsg" e "quando" (hh:mm). Não invente preço que o João ofereceria. Quem está vendendo NÃO entra em "itens" (lista de retomada). Ignore Facebook, OLX e Instagram para ofertas.
+
 SAÍDA: grave com a ferramenta Write o arquivo coletas\{DATA}\resultado.json (na pasta atual), com este formato:
 {
   "data": "{DATA}",
@@ -66,6 +68,9 @@ SAÍDA: grave com a ferramenta Write o arquivo coletas\{DATA}\resultado.json (na
   ],
   "retornos": [
     {"nome": "...", "canal": "...", "contato": "...", "produto": "...", "data": "AAAA-MM-DD", "pedido": "\"me chama mês que vem\"", "motivo": "...", "mensagem": "..."}
+  ],
+  "ofertas": [
+    {"nome": "...", "canal": "whatsapp", "contato": "...", "produto": "PS4 Slim 1TB", "detalhes": "...", "preco": 900, "precoTexto": "...", "situacao": "...", "mensagem": "...", "ultimaMsg": "...", "quando": "hh:mm"}
   ],
   "agendadas": [
     {"nome": "...", "canal": "...", "contato": "...", "data": "AAAA-MM-DD", "hora": "...", "local": "...", "entrega": "...",

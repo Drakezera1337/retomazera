@@ -7,7 +7,7 @@ const K = { cache: 'retomazera:cache', push: 'retomazera:push', acoesPendentes: 
 const lerJSON = (k, p) => { try { return JSON.parse(localStorage.getItem(k)) ?? p; } catch { return p; } };
 const gravarJSON = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem storage */ } };
 
-const S = { dias: [], semanas: [], noites: [], retornos: [], espera: [], estoque: [], acoes: {}, cards: {}, mostrarExcluidos: false, ts: 0, status: null, carregando: false, erro: '' };
+const S = { dias: [], semanas: [], noites: [], retornos: [], espera: [], estoque: [], ofertas: [], precos: {}, acoes: {}, cards: {}, mostrarExcluidos: false, ts: 0, status: null, carregando: false, erro: '' };
 
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.hidden = false;
@@ -39,13 +39,13 @@ async function carregar() {
   try {
     if (NO_PC) {
       const r = await api('lembretes');
-      S.dias = r.dias || []; S.semanas = r.semanas || []; S.noites = r.noites || []; S.retornos = r.retornos || []; S.espera = r.espera || []; S.estoque = r.estoque || []; S.acoes = r.acoes || {}; S.ts = r.ts;
+      S.dias = r.dias || []; S.semanas = r.semanas || []; S.noites = r.noites || []; S.retornos = r.retornos || []; S.espera = r.espera || []; S.estoque = r.estoque || []; S.ofertas = r.ofertas || []; S.precos = r.precos || {}; S.acoes = r.acoes || {}; S.ts = r.ts;
       S.status = await api('status');
     } else if (Sync.enabled()) {
       const { 'lembretes.json': l, 'acoes.json': ac } = await Sync.ler({ 'lembretes.json': { dias: [] }, 'acoes.json': {} });
-      S.dias = l.dias || []; S.semanas = l.semanas || []; S.noites = l.noites || []; S.retornos = l.retornos || []; S.espera = l.espera || []; S.estoque = l.estoque || []; S.ts = l.ts || 0;
+      S.dias = l.dias || []; S.semanas = l.semanas || []; S.noites = l.noites || []; S.retornos = l.retornos || []; S.espera = l.espera || []; S.estoque = l.estoque || []; S.ofertas = l.ofertas || []; S.precos = l.precos || {}; S.ts = l.ts || 0;
       S.acoes = juntarAcoes(ac || {}, lerJSON(K.acoesPendentes, {}));
-      gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, noites: S.noites, retornos: S.retornos, espera: S.espera, estoque: S.estoque, acoes: S.acoes, ts: S.ts });
+      gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, noites: S.noites, retornos: S.retornos, espera: S.espera, estoque: S.estoque, ofertas: S.ofertas, precos: S.precos, acoes: S.acoes, ts: S.ts });
     }
   } catch (err) {
     S.erro = err.message || String(err);
@@ -404,6 +404,54 @@ function telaEspera() {
   const vaiUsar = (e) => { const u = aloc.porChave[e.chave]; return u ? `${u.situacao === 'disponivel' ? '✅' : '🚚'} Vai usar: ${u.nome || u.item} (custo ${brlV(u.custo)})` : ''; };
   return `<h1>⏳ Fila de espera</h1><p class="sub">Clientes esperando um modelo sem estoque. Quando a Gestão tiver o item em "Aguardando venda", você recebe a notificação e eles aparecem na aba Hoje. Cada unidade vai para o primeiro da fila que ela atende — use ▲ ▼ para mudar a prioridade.</p>
     ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<h2 style="margin:14px 0 8px">${esc(f)} (${l.length})${l.some((e) => e.chegou) ? ' · 🔔 tem no estoque' : ''}</h2>${blocoEstoque(f)}${filaOrdenada(l).map((e, i, arr) => `<div class="ordem-fila"><b>${i + 1}º da fila</b><span><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="-1" ${i ? '' : 'disabled'}>▲ Subir</button><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="1" ${i < arr.length - 1 ? '' : 'disabled'}>▼ Descer</button></span></div>${cardEspera(e, Boolean(e.chegou), vaiUsar(e))}`).join('')}`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
+}
+
+// ---------------------------------------------------------------- comprar: gente querendo vender videogame (WhatsApp)
+function cartaoOferta(o) {
+  const st = S.acoes[`oferta:${o.chave}`] || {};
+  S.cards[o.chave] = o;
+  const fone = foneBR(o);
+  const link = linkConversa(o);
+  const ref = S.precos[o.familia] || {};
+  const margem = o.preco && ref.venda ? ref.venda - o.preco : null;
+  const refTxt = ref.compra || ref.venda
+    ? `<p class="ref-preco">📊 ${esc(o.familia)} na Gestão: ${ref.compra ? `você paga em média <b>${esc(brlV(ref.compra))}</b>` : ''}${ref.compra && ref.venda ? ' · ' : ''}${ref.venda ? `vende por <b>${esc(brlV(ref.venda))}</b>` : ''}${margem != null ? ` · pagando o pedido sobra <b class="${margem >= 0 ? 'lucro' : 'prejuizo'}">${margem >= 0 ? '+' : ''}${esc(brlV(margem))}</b>` : ''}</p>`
+    : '';
+  return `<div class="item media ${st.comprei ? 'vendido' : ''} ${st.descartada ? 'excluido' : ''}">
+    <div class="item-topo">
+      <span class="item-nome">${esc(o.nome || 'Contato')}${fone ? ` <span class="item-fone">${esc(fone)}</span>` : ''}</span>
+      <span class="chip wpp">WhatsApp</span>
+      ${st.comprei ? '<span class="chip vend">Comprei</span>' : ''}
+    </div>
+    <p><b>🎮 ${esc(o.produto)}</b>${o.preco ? ` · pede <b>${esc(brlV(o.preco))}</b>` : ''}${o.precoTexto && !o.preco ? ` · ${esc(o.precoTexto)}` : ''}</p>
+    ${o.precoTexto && o.preco ? `<p class="sub">💬 ${esc(o.precoTexto)}</p>` : ''}
+    ${o.detalhes ? `<p>📝 ${esc(o.detalhes)}</p>` : ''}
+    ${o.situacao ? `<p><span class="rot">Onde parou</span>${esc(o.situacao)}</p>` : ''}
+    ${refTxt}
+    ${o.ultimaMsg ? `<p class="sub">“${esc(o.ultimaMsg)}”${o.quando ? ` · ${esc(o.quando)}` : ''} · ${esc(dataBR(o.atualizado, false))}</p>` : ''}
+    ${o.mensagem ? `<div class="msg">${esc(o.mensagem)}</div>` : ''}
+    <div class="acoes">
+      ${link ? `<a class="btn btn-verde" href="${esc(link.split('?')[0])}" target="_blank" rel="noopener">💬 Abrir conversa</a>` : ''}
+      ${o.mensagem ? `<button class="btn" data-copiar="${esc(o.chave)}">📋 Copiar resposta</button>` : ''}
+    </div>
+    <div class="acoes">
+      <button class="btn btn-mini ${st.comprei ? 'ligado' : ''}" data-oferta="comprei" data-chave="${esc(o.chave)}">${st.comprei ? '↩️ Desfazer' : '✅ Comprei'}</button>
+      <button class="btn btn-mini ${st.descartada ? 'ligado' : ''}" data-oferta="descartada" data-chave="${esc(o.chave)}">${st.descartada ? '↩️ Voltar' : '🗑️ Descartar'}</button>
+    </div>
+  </div>`;
+}
+function marcarOferta(chave, campo) {
+  const k = `oferta:${chave}`, atual = S.acoes[k] || {};
+  salvarAcoes({ [k]: { ...atual, [campo]: !atual[campo], ts: Date.now() } });
+  if (campo === 'comprei' && !atual.comprei) toast('Comprado 🎮 — lembre de cadastrar na Gestão.');
+}
+function telaComprar() {
+  const st = (o) => S.acoes[`oferta:${o.chave}`] || {};
+  const abertas = S.ofertas.filter((o) => !st(o).comprei && !st(o).descartada);
+  const fechadas = S.ofertas.filter((o) => st(o).comprei || st(o).descartada);
+  return `<h1>🛒 Comprar</h1><p class="sub">Gente querendo te vender videogame no WhatsApp (últimos 30 dias), com o que você costuma pagar e vender na Gestão.</p>
+    ${abertas.length ? abertas.map(cartaoOferta).join('') : '<div class="vazio">Nenhuma oferta em aberto. Quando alguém oferecer um videogame no WhatsApp, aparece aqui.</div>'}
+    ${fechadas.length ? `<p class="sub"><a href="#" data-mostrar-excluidos="1">✅ ${fechadas.length} comprada(s)/descartada(s) — ${S.mostrarExcluidos ? 'esconder' : 'mostrar'}</a></p>${S.mostrarExcluidos ? fechadas.map(cartaoOferta).join('') : ''}` : ''}`;
 }
 
 function telaRetornos() {
@@ -830,6 +878,7 @@ function rotear() {
   else if (h.startsWith('#/retornos')) { html = telaRetornos(); aba = 'hoje'; }
   else if (h.startsWith('#/espera')) { html = telaEspera(); aba = 'espera'; }
   else if (h.startsWith('#/vendas')) { html = telaVendas(); aba = 'vendas'; }
+  else if (h.startsWith('#/comprar')) { html = telaComprar(); aba = 'comprar'; }
   else if (h.startsWith('#/ajustes')) { html = telaAjustes(); aba = 'ajustes'; }
   else html = telaDia(S.dias[0], 'Chamar hoje');
   $('#view').innerHTML = html;
@@ -844,6 +893,8 @@ document.addEventListener('click', async (e) => {
     try { await navigator.clipboard.writeText(x?.mensagem || ''); toast('Mensagem copiada'); } catch { toast('Não consegui copiar'); }
     return;
   }
+  const of = e.target.closest('[data-oferta]');
+  if (of) { marcarOferta(of.dataset.chave, of.dataset.oferta); return; }
   const mv = e.target.closest('[data-mover]');
   if (mv) { moverNaFila(mv.dataset.mover, Number(mv.dataset.dir)); return; }
   const dv = e.target.closest('[data-desvincular],[data-revincular]');
@@ -882,7 +933,7 @@ if (location.hash.startsWith('#config=')) {
 }
 if (!NO_PC) {
   const cache = lerJSON(K.cache, null);
-  if (cache?.dias) { S.dias = cache.dias; S.semanas = cache.semanas || []; S.noites = cache.noites || []; S.retornos = cache.retornos || []; S.espera = cache.espera || []; S.estoque = cache.estoque || []; S.acoes = cache.acoes || {}; S.ts = cache.ts; }
+  if (cache?.dias) { S.dias = cache.dias; S.semanas = cache.semanas || []; S.noites = cache.noites || []; S.retornos = cache.retornos || []; S.espera = cache.espera || []; S.estoque = cache.estoque || []; S.ofertas = cache.ofertas || []; S.precos = cache.precos || {}; S.acoes = cache.acoes || {}; S.ts = cache.ts; }
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 rotear();
