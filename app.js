@@ -419,7 +419,7 @@ function cartaoOferta(o) {
     : '';
   return `<div class="item media ${st.comprei ? 'vendido' : ''} ${st.descartada ? 'excluido' : ''}">
     <div class="item-topo">
-      <span class="item-nome">${esc(o.nome || 'Contato')}${fone ? ` <span class="item-fone">${esc(fone)}</span>` : ''}</span>
+      <span class="item-nome">${/^[+\d\s()-]+$/.test(o.nome || '') ? esc(fone || o.nome) : `${esc(o.nome || 'Contato')}${fone ? ` <span class="item-fone">${esc(fone)}</span>` : ''}`}</span>
       <span class="chip wpp">WhatsApp</span>
       ${st.comprei ? '<span class="chip vend">Comprei</span>' : ''}
     </div>
