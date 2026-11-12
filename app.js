@@ -114,7 +114,7 @@ function salvarAcoes(novas) {
         const r = await api('acoes', { method: 'POST', body: novas });
         if (!r.ok) throw new Error(r.erro || 'servidor recusou');
         for (const [k, l] of Object.entries(r.lancadas || {})) {
-          S.lancadas[k] = { ...l, em: Date.now() };
+          S.lancadas[k] = { ...l, em: Date.now() };  // l.ts = ts do formulário lançado
           toast(l.erro ? `⚠️ Não lancei na Gestão: ${l.erro}` : l.ok ? '📒 Venda lançada na Gestão' : '');
         }
         if (Object.keys(r.lancadas || {}).length) rotear();
@@ -146,7 +146,15 @@ function hojeIso() {
 // o total acompanha a diferença
 function comValoresManuais(v) {
   let delta = 0, mudou = false;
+  const a = S.acoes[v._chave] || {};
+  const g = a.concluida && a.gestao?.itens ? a.gestao.itens.slice() : [];
   const itens = (v.itens || []).map((it, i) => {
+    const gi = g.findIndex((x) => x.descricao === it.descricao);
+    const doForm = gi >= 0 ? g.splice(gi, 1)[0] : null;
+    if (doForm && S.acoes[`${v._chave}#${i}`]?.valor == null) {
+      mudou = true; delta += Number(doForm.preco_venda) - (Number(it.valor) || 0);
+      return { ...it, valor: Number(doForm.preco_venda), _gestao: doForm };
+    }
     const m = S.acoes[`${v._chave}#${i}`]?.valor;
     if (m == null || m === '') return it;
     mudou = true; delta += Number(m) - (Number(it.valor) || 0);
@@ -190,7 +198,15 @@ function textoVenda(v) {
     v.entrada ? `Entrada: ${v.entrada}` : '', v.observacoes ? `Obs.: ${v.observacoes}` : ''].filter(Boolean).join('\n');
 }
 function blocoUnidadesVenda(v) {
-  if (!S.estoque.length || (S.acoes[v._chave] || {}).concluida) return '';
+  if ((S.acoes[v._chave] || {}).concluida) {
+    return (v.itens || []).filter((it) => it._gestao).map((it) => {
+      const g = it._gestao, lucro = Number(g.preco_venda) - (Number(g.custo) || 0);
+      return `<div class="unidade"><div class="sem-foto">${ICONE_FAMILIA(g.familia || '')}</div>
+        <div class="unidade-txt"><span class="sub">🎮 Saiu:</span> <b>${esc(g.nome || '')}</b>
+        <div>Custo <b>${brlV(g.custo) || '—'}</b> · Vendido por ${brlV(g.preco_venda)}${g.custo != null ? ` · <span class="${lucro >= 0 ? 'lucro' : 'prejuizo'}">${lucro >= 0 ? '+' : ''}${brlV(lucro)}</span>` : ''}</div></div></div>`;
+    }).join('');
+  }
+  if (!S.estoque.length) return '';
   const aloc = alocarVendas();
   return (v.itens || []).map((it, i) => ({ it, chave: `${v._chave}#${i}` })).map(({ it, chave }) => {
     const fam = S.estoque.find((u) => (u.atende || []).includes(chave))?.familia;
@@ -485,13 +501,13 @@ function concluirVenda(chaveVenda, gestao) {
 function seloGestao(chaveVenda) {
   const a = S.acoes[chaveVenda] || {}, l = S.lancadas[chaveVenda];
   if (!a.concluida || !a.gestao) return '';
-  if (!l || (l.em || 0) < (a.gestao.ts || 0)) return '<span class="chip media">⏳ Indo p/ Gestão</span>';
+  if (!l || l.ts !== a.gestao.ts) return '<span class="chip media">⏳ Indo p/ Gestão</span>';  // relógio do celular ≠ do PC: compara o ts do formulário
   if (l.erro) return '<span class="chip alta">⚠️ Gestão</span>';
   return l.ok ? '<span class="chip vend">📒 Na Gestão</span>' : '';
 }
 function erroGestao(chaveVenda) {
   const a = S.acoes[chaveVenda] || {}, l = S.lancadas[chaveVenda];
-  if (!a.concluida || !a.gestao || !l?.erro || (l.em || 0) < (a.gestao.ts || 0)) return '';
+  if (!a.concluida || !a.gestao || !l?.erro || l.ts !== a.gestao.ts) return '';
   return `<p class="fv-erro">⚠️ Não lancei na Gestão: ${esc(l.erro)} <button class="btn btn-mini" data-corrigir-venda="${esc(chaveVenda)}">✏️ Corrigir</button></p>`;
 }
 // ---------------------------------------------------------------- noite: preparar as vendas de amanhã
@@ -789,7 +805,8 @@ function resultadoVendas(lista) {
     const itens = (v.itens || []).map((it, i) => ({ it, u: aloc.porItem[`${v._chave}#${i}`] }));
     fat += Number(v.total) || itens.reduce((s, x) => s + (Number(x.it.valor) || 0), 0);
     for (const { it, u } of itens) {
-      if (u) custo += Number(u.custo) || 0;
+      if (it._gestao) custo += Number(it._gestao.custo) || 0;
+      else if (u) custo += Number(u.custo) || 0;
       else if (!/^\W*(taxa|frete|entrega)/i.test(it.descricao || '')) semCusto += 1;
     }
   }

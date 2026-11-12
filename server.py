@@ -748,7 +748,7 @@ def gravar_lancadas(d):
 
 
 def lancadas_publicas():
-    return {k: {"ok": bool(v.get("ok")), "em": v.get("em"), "erro": v.get("erro") or "",
+    return {k: {"ok": bool(v.get("ok")), "em": v.get("em"), "ts": v.get("tentou"), "erro": v.get("erro") or "",
                 "itens": [i.get("nome") or "" for i in v.get("itens") or []]} for k, v in ler_lancadas().items()}
 
 
@@ -1830,7 +1830,7 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 print(f"[gestão] {exc}")
             lanc = ler_lancadas()
-            return self._json({"ok": True, "lancadas": {k: {"ok": bool(lanc[k].get("ok")), "erro": lanc[k].get("erro") or ""}
+            return self._json({"ok": True, "lancadas": {k: {"ok": bool(lanc[k].get("ok")), "erro": lanc[k].get("erro") or "", "ts": lanc[k].get("tentou")}
                                                         for k in novas if k in lanc}})
         if path == "/api/noite":
             data = str(corpo.get("data") or time.strftime("%Y-%m-%d"))
