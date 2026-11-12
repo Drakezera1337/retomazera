@@ -611,13 +611,35 @@ def json_do_arquivo(arquivos, nome, padrao):
         return padrao
 
 
+# O GitHub aceita 100 atualizações de Gist por hora na CONTA toda (todos os apps). Bloqueado (403/429):
+# guarda a publicação como pendente e o laco_gist tenta de novo quando o limite zerar.
+_gist_pendente = {"ate": 0, "pendente": False}
+
+
 def publicar_gist():
     if not gist_cfg():
         return False
+    if _gist_pendente["pendente"] and time.time() < _gist_pendente["ate"]:
+        return False  # ainda bloqueado: o laço publica a versão mais nova quando liberar
+    try:
+        return _publicar_gist()
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (403, 429):
+            raise
+        reset = exc.headers.get("X-RateLimit-Reset") or ""
+        espera = exc.headers.get("Retry-After") or ""
+        ate = float(reset) if reset.isdigit() else time.time() + (int(espera) if espera.isdigit() else 300)
+        _gist_pendente.update(pendente=True, ate=ate + 5)
+        print(f"[gist] GitHub limitou ({exc.headers.get('X-RateLimit-Resource') or exc.code}); publico de novo às {time.strftime('%H:%M', time.localtime(ate + 5))}")
+        return False
+
+
+def _publicar_gist():
     corpo = {"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "retornos": retornos_publicos(),
              "espera": espera_publica(), "estoque": estoque_fila(), "ofertas": ofertas_publicas(), "precos": precos_referencia(),
              "ts": int(time.time() * 1000)}
     gist_request("PATCH", {"files": {"lembretes.json": {"content": json.dumps(corpo, ensure_ascii=False)}}})
+    _gist_pendente.update(pendente=False, ate=0)
     return True
 
 
@@ -1262,6 +1284,8 @@ def laco_gist():
                             _push["testes"][i["endpoint"]] = i.get("testeEm") or 0
                     primeira = False
                 processar_gist()
+                if _gist_pendente["pendente"] and time.time() >= _gist_pendente["ate"] and publicar_gist():
+                    print("[gist] publicação pendente enviada")
             except Exception as exc:  # noqa: BLE001
                 print(f"[gist] {exc}")
         time.sleep(GIST_LER_S)
