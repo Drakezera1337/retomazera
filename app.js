@@ -415,10 +415,17 @@ function cartaoOferta(o) {
   const fone = foneBR(o);
   const link = linkConversa(o);
   const ref = S.precos[o.familia] || {};
-  const margem = o.preco && ref.venda ? ref.venda - o.preco : null;
-  const refTxt = ref.compra || ref.venda
-    ? `<p class="ref-preco">📊 ${esc(o.familia)} na Gestão: ${ref.compra ? `você paga em média <b>${esc(brlV(ref.compra))}</b>` : ''}${ref.compra && ref.venda ? ' · ' : ''}${ref.venda ? `vende por <b>${esc(brlV(ref.venda))}</b>` : ''}${margem != null ? ` · pagando o pedido sobra <b class="${margem >= 0 ? 'lucro' : 'prejuizo'}">${margem >= 0 ? '+' : ''}${esc(brlV(margem))}</b>` : ''}</p>`
-    : '';
+  // negociado = o que o João ofereceu (senão, o que a pessoa pediu); margem = venda média − negociado
+  const negociado = o.ofertado || o.preco || null;
+  const margem = negociado && ref.venda ? ref.venda - negociado : null;
+  const col = (rot, val, sub = '') => `<div class="neg-col"><small>${rot}</small><b>${val ? esc(brlV(val)) : '—'}</b>${sub ? `<small>${sub}</small>` : ''}</div>`;
+  const refTxt = `<div class="negocio">
+      ${col('Média de compra', ref.compra, ref.nCompra ? `${ref.nCompra} compra(s)` : 'sem histórico')}
+      ${col('Negociado', negociado, o.ofertado ? 'sua oferta' : o.preco ? 'pedido dele' : 'sem valor ainda')}
+      ${col('Venda média', ref.venda, ref.nVenda ? `${ref.nVenda} venda(s)` : 'sem histórico')}
+    </div>
+    ${margem != null ? `<p class="neg-margem">Comprando por ${esc(brlV(negociado))} e vendendo na média: <b class="${margem >= 0 ? 'lucro' : 'prejuizo'}">${margem >= 0 ? '+' : ''}${esc(brlV(margem))}</b>${o.ofertado && o.preco && o.preco !== o.ofertado ? ` · ele pediu ${esc(brlV(o.preco))}` : ''}</p>` : ''}
+    ${o.ofertadoTexto ? `<p class="sub">🤝 Sua oferta: ${esc(o.ofertadoTexto)}</p>` : ''}`;
   return `<div class="item media ${st.comprei ? 'vendido' : ''} ${st.descartada ? 'excluido' : ''}">
     <div class="item-topo">
       <span class="item-nome">${/^[+\d\s()-]+$/.test(o.nome || '') ? esc(fone || o.nome) : `${esc(o.nome || 'Contato')}${fone ? ` <span class="item-fone">${esc(fone)}</span>` : ''}`}</span>

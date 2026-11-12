@@ -110,3 +110,8 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 .atalho-txt small { font-size: 13px; color: var(--suave); }
 .atalho-seta { font-size: 24px; color: var(--verde); flex: none; }
 .sub a, .painel a:not(.btn) { color: var(--verde); font-weight: 600; text-decoration: none; }
+.negocio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0 4px; }
+.neg-col { background: var(--fundo); border-radius: 10px; padding: 8px 6px; text-align: center; display: flex; flex-direction: column; gap: 2px; }
+.neg-col small { font-size: 11px; color: var(--suave); } .neg-col b { font-size: 15px; }
+.neg-col:nth-child(2) { outline: 2px solid var(--verde); }
+.neg-margem { margin: 6px 0 2px; font-size: 14px; }

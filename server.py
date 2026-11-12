@@ -192,7 +192,12 @@ def registrar_ofertas(lista, origem_data):
             preco = float(x["preco"]) if x.get("preco") not in (None, "") else None
         except (TypeError, ValueError):
             preco = None
+        try:
+            ofertado = float(x["ofertado"]) if x.get("ofertado") not in (None, "") else antigo.get("ofertado")
+        except (TypeError, ValueError):
+            ofertado = antigo.get("ofertado")
         reg[k] = {**antigo, "chave": k, "nome": txt("nome", 80), "canal": "whatsapp", "contato": txt("contato", 40),
+                  "ofertado": ofertado, "ofertadoTexto": txt("ofertadoTexto", 160) or antigo.get("ofertadoTexto", ""),
                   "produto": produto, "familia": familia(produto), "detalhes": txt("detalhes", 400),
                   "preco": preco, "precoTexto": txt("precoTexto", 120), "situacao": txt("situacao", 400),
                   "mensagem": txt("mensagem", 600), "ultimaMsg": txt("ultimaMsg", 300), "quando": txt("quando", 20),
