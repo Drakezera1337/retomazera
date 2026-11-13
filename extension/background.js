@@ -323,7 +323,73 @@ chrome.notifications.onClicked.addListener((id) => {
   if (id === 'rz-coleta' || id === 'rz-analise') { chrome.tabs.create({ url: `${SERVIDOR}/` }); chrome.notifications.clear(id); }
 });
 
+// ---- teste: a coleta funciona com a janela MINIMIZADA? Roda cada fonte duas vezes (minimizada e na janela
+// normal sem foco, mesmo "desde" = últimas 24 h), compara quantas conversas/mensagens vieram e o tempo.
+// Não manda nada para a análise: o resultado vai só para /api/teste_coleta (server.log + teste_coleta.json).
+async function rodarExtrator(k, tabId, desde, c) {
+  const f = FONTES[k];
+  const args = k === 'whatsapp' ? [desde, c.ignorar || [], 25, { primeira: true, feitos: [], prazoMs: 150000 }] : [desde, c.ignorar || []];
+  const [res] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func, args });
+  return (res && res.result) || { erro: 'sem resposta do extrator', conversas: [] };
+}
+async function umaRodada(k, estadoJanela, desde, c) {
+  const f = FONTES[k], t0 = Date.now();
+  const janela = await chrome.windows.create({ url: 'about:blank', focused: false, state: estadoJanela, ...(estadoJanela === 'normal' ? { width: 1280, height: 900 } : {}) });
+  let tabId = null, devolver = null, abriu = false;
+  try {
+    const existentes = f.padrao ? await chrome.tabs.query({ url: f.padrao }) : [];
+    if (existentes.length) {
+      const t = existentes[0]; tabId = t.id;
+      devolver = { tabId: t.id, windowId: t.windowId, index: t.index, active: t.active };
+      await chrome.tabs.move(t.id, { windowId: janela.id, index: -1 });
+      await chrome.tabs.update(tabId, { active: true });
+    } else {
+      tabId = (await chrome.tabs.create({ windowId: janela.id, url: f.url, active: true })).id; abriu = true;
+      await esperarCarregar(tabId);
+    }
+    if (estadoJanela === 'minimized') await chrome.windows.update(janela.id, { state: 'minimized', focused: false });
+    await new Promise((r) => setTimeout(r, 3000));
+    const r = await rodarExtrator(k, tabId, desde, c);
+    const conv = r.conversas || [];
+    return { janela: estadoJanela, erro: r.erro || '', conversas: conv.length,
+      mensagens: conv.reduce((s, x) => s + ((x.mensagens || []).length || 0), 0),
+      naoAbriu: conv.filter((x) => x.aviso).length, nomes: conv.map((x) => x.nome).slice(0, 30), segundos: Math.round((Date.now() - t0) / 1000) };
+  } catch (e) {
+    return { janela: estadoJanela, erro: String(e.message || e).slice(0, 150), conversas: 0, mensagens: 0, segundos: Math.round((Date.now() - t0) / 1000) };
+  } finally {
+    await devolverAba(devolver);
+    if (abriu && tabId) await chrome.tabs.remove(tabId).catch(() => {});
+    await chrome.windows.remove(janela.id).catch(() => {});
+  }
+}
+async function testeMinimizado() {
+  if (rodando) return;
+  rodando = true;
+  const vivo = setInterval(() => { chrome.runtime.getPlatformInfo(() => {}); }, 20000);
+  const c = await config();
+  const desde = Date.now() - 24 * 3600000;
+  const resultado = { em: Date.now(), perfil: c.perfil || '', fontes: {} };
+  try {
+    await estado({ rodando: true, atual: 'teste minimizado', inicio: Date.now(), fontes: {} });
+    for (const k of Object.keys(FONTES).filter((x) => c.fontes[x])) {
+      const min = await umaRodada(k, 'minimized', desde, c);
+      const normal = await umaRodada(k, 'normal', desde, c);
+      resultado.fontes[k] = { minimizada: min, normal };
+      await estado({ fontes: { ...((await chrome.storage.local.get('est')).est.fontes || {}),
+        [k]: `minimizada ${min.erro ? 'ERRO ' + min.erro : min.conversas + ' conv/' + min.mensagens + ' msg'} · normal ${normal.erro ? 'ERRO ' + normal.erro : normal.conversas + ' conv/' + normal.mensagens + ' msg'}` } });
+    }
+    await fetch(`${SERVIDOR}/api/teste_coleta`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(resultado) }).catch(() => {});
+    const linhas = Object.entries(resultado.fontes).map(([k, r]) => `${FONTES[k].nome}: min ${r.minimizada.erro ? '❌' : r.minimizada.conversas} × normal ${r.normal.erro ? '❌' : r.normal.conversas}`);
+    try { await chrome.notifications.create('rz-teste', { type: 'basic', iconUrl: 'icon.png', title: 'Retomazera: teste minimizado concluído', message: linhas.join('\n') }); } catch { /* sem aviso */ }
+  } finally {
+    clearInterval(vivo);
+    rodando = false;
+    await estado({ rodando: false, fim: Date.now() });
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _s, responder) => {
+  if (msg.tipo === 'testeMin') { testeMinimizado(); responder({ ok: true }); }
   if (msg.tipo === 'coletar') {
     if (msg.turno === 'ronda') { const h = new Date().getHours(); coletar('ronda', String(RONDAS.filter((x) => x <= h).pop() ?? 8).padStart(2, '0')); }
     else coletar(msg.turno === 'noite' ? 'noite' : 'manual');

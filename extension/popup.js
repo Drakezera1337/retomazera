@@ -40,3 +40,4 @@ $('salvar').onclick = () => {
 $('agora').onclick = () => chrome.runtime.sendMessage({ tipo: 'coletar' });
 $('agoraNoite').onclick = () => chrome.runtime.sendMessage({ tipo: 'coletar', turno: 'noite' });
 $('agoraRonda').onclick = () => chrome.runtime.sendMessage({ tipo: 'coletar', turno: 'ronda' });
+$('testeMin').onclick = () => chrome.runtime.sendMessage({ tipo: 'testeMin' });

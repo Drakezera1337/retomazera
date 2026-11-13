@@ -1817,6 +1817,14 @@ class Handler(SimpleHTTPRequestHandler):
             enviados = enviar_push(payload_dia(dia)) if corpo.get("notificar", True) else 0
             print(f"[lembretes] {dia['data']}: {len(dia['itens'])} cliente(s), gist={publicado}, push={enviados}")
             return self._json({"ok": True, "itens": len(dia["itens"]), "gist": publicado, "push": enviados})
+        if path == "/api/teste_coleta":  # teste da coleta minimizada (não vai para a análise)
+            with open(os.path.join(BASE_DIR, "teste_coleta.json"), "w", encoding="utf-8") as f:
+                json.dump(corpo, f, ensure_ascii=False, indent=1)
+            for k, r in (corpo.get("fontes") or {}).items():
+                m, n = r.get("minimizada") or {}, r.get("normal") or {}
+                print(f"[teste minimizado] {k}: minimizada {m.get('conversas')} conv/{m.get('mensagens')} msg/{m.get('naoAbriu')} falha"
+                      f" {m.get('segundos')}s {m.get('erro') or ''} · normal {n.get('conversas')} conv/{n.get('mensagens')} msg/{n.get('naoAbriu')} falha {n.get('segundos')}s {n.get('erro') or ''}")
+            return self._json({"ok": True})
         if path == "/api/coleta":
             try:
                 n = salvar_coleta(corpo)
