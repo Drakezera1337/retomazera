@@ -263,11 +263,20 @@ function cartaoVenda(v) {
     ${cartaoVendaCorpo(v)}</details>`;
 }
 // lucro da venda no resumo: só quando o custo do videogame é conhecido (Gestão ou unidade escolhida)
-function lucroResumo(v) {
+function lucroVenda(v) {
   const r = resultadoVendas([v]);
-  if (!r.fat || (!r.custo && !(v.itens || []).some((it) => it._gestao))) return '';
-  const l = Math.round(r.lucro * 100) / 100;
-  return ` · <b class="${l >= 0 ? 'lucro' : 'prejuizo'}">${l >= 0 ? '+' : ''}${esc(brlV(l))}</b>`;
+  if (!r.fat || (!r.custo && !(v.itens || []).some((it) => it._gestao))) return null;
+  return Math.round(r.lucro * 100) / 100;
+}
+const lucroHtml = (l) => `<b class="${l >= 0 ? 'lucro' : 'prejuizo'}">${l >= 0 ? '+' : ''}${esc(brlV(l))}</b>`;
+function lucroResumo(v) {
+  const l = lucroVenda(v);
+  return l == null ? '' : ` · ${lucroHtml(l)}`;
+}
+// soma do lucro de uma lista (só as vendas com custo conhecido)
+function somaLucro(lista) {
+  const ls = lista.map(lucroVenda).filter((l) => l != null);
+  return ls.length ? ` <span class="gf-n">· lucro ${lucroHtml(Math.round(ls.reduce((a, b) => a + b, 0) * 100) / 100)}</span>` : '';
 }
 function cartaoVendaCorpo(v) {
   const [cls, nomeCanal] = CANAIS[(v.canal || '').toLowerCase()] || ['', v.canal || '—'];
@@ -853,7 +862,7 @@ function blocoVendas(naAba) {
   return `<h2 style="margin:4px 0 8px">📦 Vendas do dia${doDia.length ? ` (${doDia.length})` : ''}</h2>
     ${doDia.length ? `${r.fat ? `<p class="sub">Faturamento <b>${esc(brlV(r.fat))}</b> · Lucro <b class="lucro">${esc(brlV(r.lucro))}</b></p>` : ''}${doDia.map(cartaoVenda).join('')}` : '<p class="sub">Nenhuma venda marcada para hoje.</p>'}
     ${atrasadas.length ? `<h2 style="margin:14px 0 8px">⚠️ Ficaram pendentes</h2>${atrasadas.map(cartaoVenda).join('')}` : ''}
-    ${proximas.length ? `<h2 style="margin:14px 0 8px">🗓️ Próximas</h2>${proximas.map(cartaoVenda).join('')}` : ''}
+    ${proximas.length ? `<h2 style="margin:14px 0 8px">🗓️ Próximas (${proximas.length})${somaLucro(proximas)}</h2>${proximas.map(cartaoVenda).join('')}` : ''}
     ${naAba ? '' : '<h2 style="margin:18px 0 8px">📲 Para chamar</h2>'}`;
 }
 // faturamento = total combinado; lucro = faturamento − custo (Gestão) dos videogames que vão em cada venda.
