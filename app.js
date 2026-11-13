@@ -259,8 +259,15 @@ function cartaoVenda(v) {
   return `<details class="grupo-fila grupo-venda" data-grupo="vendasAbertas" data-fam="${esc(v._chave)}" ${grupoAberto('vendasAbertas', v._chave) ? 'open' : ''}>
     <summary><span class="gf-nome">${esc(v.nome || 'Cliente')}</span>
       ${st.concluida ? '<span class="chip vend">✅ Concluída</span>' : v.status === 'a confirmar' ? '<span class="chip media">A confirmar</span>' : '<span class="chip vend">Confirmada</span>'}
-      <span class="gf-n">${esc(quando)}${v.hora ? ` · ${esc(v.hora)}` : ''}${oque ? ` · ${esc(oque.slice(0, 60))}` : ''}${brlV(v.total) ? ` · <b>${esc(brlV(v.total))}</b>` : ''}</span></summary>
+      <span class="gf-n">${esc(quando)}${v.hora ? ` · ${esc(v.hora)}` : ''}${oque ? ` · ${esc(oque.slice(0, 60))}` : ''}${brlV(v.total) ? ` · <b>${esc(brlV(v.total))}</b>` : ''}${lucroResumo(v)}</span></summary>
     ${cartaoVendaCorpo(v)}</details>`;
+}
+// lucro da venda no resumo: só quando o custo do videogame é conhecido (Gestão ou unidade escolhida)
+function lucroResumo(v) {
+  const r = resultadoVendas([v]);
+  if (!r.fat || (!r.custo && !(v.itens || []).some((it) => it._gestao))) return '';
+  const l = Math.round(r.lucro * 100) / 100;
+  return ` · <b class="${l >= 0 ? 'lucro' : 'prejuizo'}">${l >= 0 ? '+' : ''}${esc(brlV(l))}</b>`;
 }
 function cartaoVendaCorpo(v) {
   const [cls, nomeCanal] = CANAIS[(v.canal || '').toLowerCase()] || ['', v.canal || '—'];
