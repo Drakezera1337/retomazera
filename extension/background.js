@@ -187,8 +187,14 @@ async function avisarProgresso(c, origem, prog, fim, rodada) {
 
 // Coleta em segundo plano: janela própria aberta SEM foco (não rouba a tela). Se o WhatsApp já estiver
 // aberto numa aba, ela é movida para essa janela durante a coleta e volta para o lugar depois.
-async function janelaDeFundo() {
-  return chrome.windows.create({ url: 'about:blank', focused: false, state: 'normal', width: 1280, height: 900 });
+// Facebook e Instagram funcionam com a janela MINIMIZADA (teste de 12/11/2026: mesmo resultado); o WhatsApp
+// não (minimizado o Chrome congela a página: veio 10 mensagens em vez de 316), então ele usa a janela sem foco.
+// Se o Chrome for aberto com --disable-backgrounding-occluded-windows, tudo pode ir minimizado (cfg.tudoMinimizado).
+const MINIMIZA = new Set(['facebook', 'instagram']);
+async function janelaDeFundo(minimizada) {
+  return minimizada
+    ? chrome.windows.create({ url: 'about:blank', focused: false, state: 'minimized' })
+    : chrome.windows.create({ url: 'about:blank', focused: false, state: 'normal', width: 1280, height: 900 });
 }
 async function devolverAba(d) {
   if (!d) return;
@@ -229,7 +235,9 @@ async function coletar(origem, rodada = '') {
       try {
         // WhatsApp Web só funciona numa aba: reaproveita a que já estiver aberta
         const existentes = f.padrao ? await chrome.tabs.query({ url: f.padrao }) : [];
-        if (!janela) janela = await janelaDeFundo();
+        const minimizar = MINIMIZA.has(k) || !!c.tudoMinimizado;
+        if (janela && janela.minimizada !== minimizar) { await chrome.windows.remove(janela.id).catch(() => {}); janela = null; }
+        if (!janela) { janela = await janelaDeFundo(minimizar); janela.minimizada = minimizar; }
         if (existentes.length) {
           const t = existentes[0];
           tabId = t.id;
@@ -243,6 +251,7 @@ async function coletar(origem, rodada = '') {
           abriuAqui = true;
           await esperarCarregar(tabId);
         }
+        if (minimizar) await chrome.windows.update(janela.id, { state: 'minimized', focused: false }).catch(() => {});
         await new Promise((r) => setTimeout(r, 3000));
         // noite: só as conversas de hoje (não mexe no ponto de partida da coleta da manhã)
         const [aa, mm, dd] = data.split('-').map(Number);
