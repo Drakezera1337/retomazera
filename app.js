@@ -270,6 +270,7 @@ function cartaoVenda(v) {
     ${brlV(v.total) ? `<p class="venda-total">Total: <b>${esc(brlV(v.total))}</b></p>` : ''}
     ${v.pagamento ? `<p>💳 ${esc(v.pagamento)}</p>` : ''}
     ${v.entrada ? `<p>🔁 Entrada: ${esc(v.entrada)}</p>` : ''}
+    ${st.obs ? `<p class="obs-venda">🗒️ <b>Sua observação:</b> ${esc(st.obs)}</p>` : ''}
     ${v.observacoes ? `<p>📝 ${esc(v.observacoes)}</p>` : ''}
     ${v.resumo ? `<p class="sub">${esc(v.resumo)}</p>` : ''}
     ${erroGestao(v._chave)}
@@ -401,6 +402,8 @@ function abrirFormVenda(chaveVenda) {
       ${blocos}${listas}`
     : `<p>Não achei o videogame dessa venda no estoque da Gestão — dá para concluir aqui e lançar a venda por lá.</p>`}
     ${v.pagamento || v.entrada ? `<p class="sub">Combinado: ${esc([v.pagamento, v.entrada ? `entrada ${v.entrada}` : ''].filter(Boolean).join(' · '))}</p>` : ''}
+    <label class="fv-campo">📝 Observação da venda <span class="sub">(opcional${itens.length ? ' — vai também para as Observações do produto na Gestão' : ''})</span>
+      <textarea class="fv-obs" rows="3" maxlength="500" placeholder="Ex.: levou 2 jogos de brinde, garantia de 90 dias, pagou a entrega à parte…">${esc((S.acoes[chaveVenda] || {}).obs ?? base.obs ?? '')}</textarea></label>
     <p class="fv-erro" hidden></p>
     <div class="acoes fv-botoes">
       ${itens.length ? '<button type="submit" class="btn btn-verde">✅ Lançar na Gestão</button>' : ''}
@@ -448,7 +451,7 @@ function acaoFormVenda(btn) {
   const modal = btn.closest('.modal'), item = btn.closest('.fv-item');
   const o = btn.dataset.fv;
   if (o === 'fechar') { fecharFormVenda(); return; }
-  if (o === 'so-concluir') { const k = modal.dataset.modalVenda; fecharFormVenda(); concluirVenda(k, null); return; }
+  if (o === 'so-concluir') { const k = modal.dataset.modalVenda, obs = modal.querySelector('.fv-obs')?.value.trim() || ''; fecharFormVenda(); concluirVenda(k, null, obs); return; }
   if (o === 'tirar') { btn.closest('.fv-parcela').remove(); atualizarItemVenda(item); return; }
   if (o === 'parcela') {
     const ps = [...item.querySelectorAll('.fv-parcela')];
@@ -470,7 +473,8 @@ function lerFormVenda(modal) {
   const data = modal.querySelector('.fv-data').value;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) erro('Preencha a data da venda.');
   const comum = { data_venda: data, origem_venda: modal.querySelector('.fv-origem').value,
-    nome_comprador: modal.querySelector('.fv-comprador').value.trim(), tel_comprador: modal.querySelector('.fv-tel').value.trim() };
+    nome_comprador: modal.querySelector('.fv-comprador').value.trim(), tel_comprador: modal.querySelector('.fv-tel').value.trim(),
+    obs: (modal.querySelector('.fv-obs')?.value || '').trim() };
   return [...modal.querySelectorAll('.fv-item')].map((item) => {
     const preco = brlNum(item.querySelector('.fv-preco').value);
     if (!preco) erro('Preencha o preço de venda.');
@@ -505,18 +509,18 @@ function enviarFormVenda(modal) {
     const itens = lerFormVenda(modal);
     const k = modal.dataset.modalVenda;
     fecharFormVenda();
-    concluirVenda(k, { ts: Date.now(), itens });
+    concluirVenda(k, { ts: Date.now(), itens }, itens[0]?.obs || '');
   } catch (err) {
     msg.textContent = err.message; msg.hidden = false;
   }
 }
 // conclui a venda (cliente vira vendido) — com gestao = formulário para lançar na Gestão
-function concluirVenda(chaveVenda, gestao) {
+function concluirVenda(chaveVenda, gestao, obs = '') {
   const v = S.cards[chaveVenda] || {};
   const atual = S.acoes[chaveVenda] || {};
   const ck = chaveCliente(v), c = S.acoes[ck] || {};
   const novas = {
-    [chaveVenda]: { ...atual, nome: v.nome, canal: v.canal, data: v.data, concluida: true, ...(gestao ? { gestao } : {}), ts: Date.now() },
+    [chaveVenda]: { ...atual, nome: v.nome, canal: v.canal, data: v.data, concluida: true, obs, ...(gestao ? { gestao } : {}), ts: Date.now() },
     [ck]: { ...c, nome: v.nome, canal: v.canal, contato: v.contato, vendido: true, vendidoEm: Date.now(), vendas: (c.vendas || 0) + (atual.concluida ? 0 : 1), ts: Date.now() },
   };
   toast(gestao ? (NO_PC ? 'Venda concluída 💰 — lançando na Gestão…' : 'Venda concluída 💰 — o PC lança na Gestão quando ler o Gist.') : 'Venda concluída 💰 — lembre de lançar na Gestão.');

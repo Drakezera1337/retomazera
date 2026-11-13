@@ -728,7 +728,8 @@ def gravar_acoes(novas):
 # então o programa do PC recarrega sozinho e o celular da Gestão recebe pela sincronização.
 CAMPOS_VENDA = ["preco_venda", "data_venda", "nome_comprador", "tel_comprador", "origem_venda",
                 "pag_cartao", "pag_pix", "pag_dinheiro", "pag_fiado", "val_cartao", "val_pix", "val_dinheiro", "val_fiado",
-                "rec_cartao_tipo", "rec_cartao_nome", "rec_pix_tipo", "rec_pix_nome", "rec_fiado_tipo", "rec_fiado_nome"]
+                "rec_cartao_tipo", "rec_cartao_nome", "rec_pix_tipo", "rec_pix_nome", "rec_fiado_tipo", "rec_fiado_nome",
+                "observacoes"]
 
 
 def ler_lancadas():
@@ -841,6 +842,10 @@ def _lancar(con, g):
         if atual["data_venda"] or "":
             raise ValueError(f"{row[1][:50]} já está vendido na Gestão ({atual['data_venda']})")
         d, parcelas = _campos_do_item(it)
+        # observação da venda vai junto das Observações do produto (o desfazer volta o texto de antes)
+        obs_ant = (atual.get("observacoes") or "").strip()
+        obs = str(it.get("obs") or "").strip()[:500]
+        d["observacoes"] = (obs_ant + "\n" if obs_ant else "") + f"Venda: {obs}" if obs else (atual.get("observacoes") or "")
         antes[uid] = atual
         con.execute("update produtos set " + ", ".join(f"{c}=:{c}" for c in CAMPOS_VENDA) + " where id=:id", {**d, "id": row[0]})
         con.execute("delete from parcelas_fiado where produto_id=?", (row[0],))
@@ -861,8 +866,10 @@ def _desfazer(con, reg):
         if (row[2] or "") != it["data_venda"] or abs(float(row[1] or 0) - float(it["preco_venda"])) > 0.01:
             raise ValueError(f"{it['nome'][:50]} foi alterado na Gestão depois — desfaça por lá")
         a = (reg.get("antes") or {}).get(it["uid"]) or {}
-        vazio = {c: (0 if c.startswith(("pag_", "val_", "preco_")) else "") for c in CAMPOS_VENDA}
-        con.execute("update produtos set " + ", ".join(f"{c}=:{c}" for c in CAMPOS_VENDA) + " where id=:id",
+        # lançamentos antigos não guardaram as Observações: nesses, não mexe nelas
+        cols = [c for c in CAMPOS_VENDA if c != "observacoes" or "observacoes" in a]
+        vazio = {c: (0 if c.startswith(("pag_", "val_", "preco_")) else "") for c in cols}
+        con.execute("update produtos set " + ", ".join(f"{c}=:{c}" for c in cols) + " where id=:id",
                     {**vazio, **{k: v for k, v in a.items() if k in CAMPOS_VENDA}, "id": row[0]})
         con.execute("delete from parcelas_fiado where produto_id=?", (row[0],))
 
