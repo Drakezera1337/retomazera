@@ -251,7 +251,18 @@ function trocarUnidadeVenda(chaveItem, uid) {
   salvarAcoes({ [chaveItem]: { ...(S.acoes[chaveItem] || {}), uid, ts: Date.now() } });
   toast('Videogame da venda trocado');
 }
+// cada venda é um item recolhível (fechado: nome, quando, o que e o total; lembra os abertos no aparelho)
 function cartaoVenda(v) {
+  const st = S.acoes[v._chave] || {};
+  const oque = (v.itens || []).map((it) => it._gestao?.nome || it.descricao).filter(Boolean)[0] || '';
+  const quando = v.data === hojeIso() ? 'Hoje' : dataBR(v.data, false);
+  return `<details class="grupo-fila grupo-venda" data-grupo="vendasAbertas" data-fam="${esc(v._chave)}" ${grupoAberto('vendasAbertas', v._chave) ? 'open' : ''}>
+    <summary><span class="gf-nome">${esc(v.nome || 'Cliente')}</span>
+      ${st.concluida ? '<span class="chip vend">✅ Concluída</span>' : v.status === 'a confirmar' ? '<span class="chip media">A confirmar</span>' : '<span class="chip vend">Confirmada</span>'}
+      <span class="gf-n">${esc(quando)}${v.hora ? ` · ${esc(v.hora)}` : ''}${oque ? ` · ${esc(oque.slice(0, 60))}` : ''}${brlV(v.total) ? ` · <b>${esc(brlV(v.total))}</b>` : ''}</span></summary>
+    ${cartaoVendaCorpo(v)}</details>`;
+}
+function cartaoVendaCorpo(v) {
   const [cls, nomeCanal] = CANAIS[(v.canal || '').toLowerCase()] || ['', v.canal || '—'];
   const st = S.acoes[v._chave] || {};
   S.cards[v._chave] = v;
@@ -629,14 +640,16 @@ function alocarVendas() {
 // ordem de prioridade da fila, por modelo: a que o João arrumou (acoes['ordem:<modelo>'].lista), depois os
 // que entraram depois por data de entrada
 // grupos abertos na aba Fila (cada modelo começa fechado; lembra no aparelho)
-function filaAberta(f) { try { return (JSON.parse(localStorage.getItem('filaAbertos') || '[]')).includes(f); } catch { return false; } }
+function grupoAberto(chave, f) { try { return (JSON.parse(localStorage.getItem(chave) || '[]')).includes(f); } catch { return false; } }
+function filaAberta(f) { return grupoAberto('filaAbertos', f); }
 document.addEventListener('toggle', (ev) => {
   const d = ev.target;
   if (!d.matches || !d.matches('details.grupo-fila')) return;
   try {
-    const l = new Set(JSON.parse(localStorage.getItem('filaAbertos') || '[]'));
+    const chave = d.dataset.grupo || 'filaAbertos';
+    const l = new Set(JSON.parse(localStorage.getItem(chave) || '[]'));
     d.open ? l.add(d.dataset.fam) : l.delete(d.dataset.fam);
-    localStorage.setItem('filaAbertos', JSON.stringify([...l]));
+    localStorage.setItem(chave, JSON.stringify([...l].slice(-60)));
   } catch { /* sem armazenamento: só não lembra */ }
 }, true);
 function filaOrdenada(lista = esperaAtiva()) {

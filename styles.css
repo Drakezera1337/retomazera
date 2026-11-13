@@ -165,3 +165,7 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 
 .form-venda textarea.fv-obs { width: 100%; box-sizing: border-box; font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--borda); background: inherit; color: inherit; resize: vertical; margin-top: 4px; }
 .obs-venda { background: rgba(0,150,110,.1); border-radius: 8px; padding: 8px 10px; }
+
+/* venda recolhível: o card fica dentro do grupo, sem borda dupla */
+.grupo-venda > summary { font-size: 1rem; }
+.grupo-venda > .item.venda { margin: 0 0 4px; border: 0; box-shadow: none; padding-left: 0; padding-right: 0; }
