@@ -624,6 +624,17 @@ function alocarVendas() {
 }
 // ordem de prioridade da fila, por modelo: a que o João arrumou (acoes['ordem:<modelo>'].lista), depois os
 // que entraram depois por data de entrada
+// grupos abertos na aba Fila (cada modelo começa fechado; lembra no aparelho)
+function filaAberta(f) { try { return (JSON.parse(localStorage.getItem('filaAbertos') || '[]')).includes(f); } catch { return false; } }
+document.addEventListener('toggle', (ev) => {
+  const d = ev.target;
+  if (!d.matches || !d.matches('details.grupo-fila')) return;
+  try {
+    const l = new Set(JSON.parse(localStorage.getItem('filaAbertos') || '[]'));
+    d.open ? l.add(d.dataset.fam) : l.delete(d.dataset.fam);
+    localStorage.setItem('filaAbertos', JSON.stringify([...l]));
+  } catch { /* sem armazenamento: só não lembra */ }
+}, true);
 function filaOrdenada(lista = esperaAtiva()) {
   const pos = (e) => { const l = S.acoes[`ordem:${e.familia}`]?.lista || []; const i = l.indexOf(e.chave); return i < 0 ? 1e6 : i; };
   return lista.slice().sort((a, b) => pos(a) - pos(b) || (a.desde || '').localeCompare(b.desde || ''));
@@ -722,7 +733,7 @@ function telaEspera() {
   };
   const vaiUsar = (e) => { const u = aloc.porChave[e.chave]; if (aloc.comVenda.has(`${chaveCliente(e)}|${e.familia}`)) return '💰 Já tem venda marcada desse modelo (sai da fila quando concluir)'; return !u ? '' : u.situacao === 'disponivel' ? `✅ Vai usar: ${u.nome || u.item} (custo ${brlV(u.custo)})` : `🔮 Previsto (chegando): ${u.nome || u.item} (custo ${brlV(u.custo)})`; };
   return `<h1>⏳ Fila de espera</h1><p class="sub">Clientes esperando um modelo sem estoque. Quando a Gestão tiver o item em "Aguardando venda", você recebe a notificação e eles aparecem na aba Hoje. Videogame disponível vai para o primeiro da fila que ele atende; o que está chegando só mostra a previsão e vai para quem for o primeiro quando chegar — use ▲ ▼ para mudar a prioridade.</p>
-    ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<h2 style="margin:14px 0 8px">${esc(f)} (${l.length})${l.some((e) => e.chegou) ? ' · 🔔 tem no estoque' : ''}</h2>${blocoEstoque(f)}${filaOrdenada(l).map((e, i, arr) => `<div class="ordem-fila"><b>${i + 1}º da fila</b><span><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="-1" ${i ? '' : 'disabled'}>▲ Subir</button><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="1" ${i < arr.length - 1 ? '' : 'disabled'}>▼ Descer</button></span></div>${cardEspera(e, Boolean(e.chegou), vaiUsar(e))}`).join('')}`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
+    ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<details class="grupo-fila" data-fam="${esc(f)}" ${filaAberta(f) ? 'open' : ''}><summary><span class="gf-nome">${esc(f)}</span> <span class="gf-n">${l.length} na fila${S.estoque.filter((u) => u.familia === f).length ? ` · ${S.estoque.filter((u) => u.familia === f).length} unidade(s) na Gestão` : ''}</span>${l.some((e) => e.chegou) ? ' <span class="chip vend">🔔 tem no estoque</span>' : ''}</summary>${blocoEstoque(f)}${filaOrdenada(l).map((e, i, arr) => `<div class="ordem-fila"><b>${i + 1}º da fila</b><span><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="-1" ${i ? '' : 'disabled'}>▲ Subir</button><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="1" ${i < arr.length - 1 ? '' : 'disabled'}>▼ Descer</button></span></div>${cardEspera(e, Boolean(e.chegou), vaiUsar(e))}`).join('')}</details>`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
 }
 
 // ---------------------------------------------------------------- comprar: gente querendo vender videogame (WhatsApp)

@@ -153,3 +153,12 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 .btn-link { background: none; border: 0; padding: 2px 4px; font: inherit; font-size: 13px; font-weight: 600; color: var(--verde); cursor: pointer; }
 .edita-valor .acoes { margin: 6px 0 4px; }
 .valor-item { font: inherit; color: var(--texto); background: var(--fundo); border: 1px solid var(--borda); border-radius: 9px; padding: 7px 10px; width: 180px; }
+
+/* aba Fila: um grupo recolhível por videogame */
+.grupo-fila { border: 1px solid var(--borda, #2a3a33); border-radius: 14px; margin: 10px 0; padding: 0 12px; background: var(--card, transparent); }
+.grupo-fila > summary { cursor: pointer; padding: 14px 0; font-size: 1.1rem; font-weight: 700; list-style: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.grupo-fila > summary::-webkit-details-marker { display: none; }
+.grupo-fila > summary::before { content: '▸'; display: inline-block; width: 1em; transition: transform .15s; }
+.grupo-fila[open] > summary::before { transform: rotate(90deg); }
+.grupo-fila .gf-n { font-weight: 400; font-size: .9rem; opacity: .75; }
+.grupo-fila[open] { padding-bottom: 10px; }
