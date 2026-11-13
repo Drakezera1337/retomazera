@@ -189,7 +189,8 @@ async function avisarProgresso(c, origem, prog, fim, rodada) {
 // aberto numa aba, ela é movida para essa janela durante a coleta e volta para o lugar depois.
 // Facebook e Instagram funcionam com a janela MINIMIZADA (teste de 12/11/2026: mesmo resultado); o WhatsApp
 // não (minimizado o Chrome congela a página: veio 10 mensagens em vez de 316), então ele usa a janela sem foco.
-// Se o Chrome for aberto com --disable-backgrounding-occluded-windows, tudo pode ir minimizado (cfg.tudoMinimizado).
+// Nem com o Chrome aberto com --disable-backgrounding-occluded-windows/--disable-renderer-backgrounding o WhatsApp
+// funciona minimizado (2º teste: 5 mensagens em vez de 326): janela minimizada não desenha a página.
 const MINIMIZA = new Set(['facebook', 'instagram']);
 async function janelaDeFundo(minimizada) {
   return minimizada
@@ -235,7 +236,7 @@ async function coletar(origem, rodada = '') {
       try {
         // WhatsApp Web só funciona numa aba: reaproveita a que já estiver aberta
         const existentes = f.padrao ? await chrome.tabs.query({ url: f.padrao }) : [];
-        const minimizar = MINIMIZA.has(k) || !!c.tudoMinimizado;
+        const minimizar = MINIMIZA.has(k);
         if (janela && janela.minimizada !== minimizar) { await chrome.windows.remove(janela.id).catch(() => {}); janela = null; }
         if (!janela) { janela = await janelaDeFundo(minimizar); janela.minimizada = minimizar; }
         if (existentes.length) {

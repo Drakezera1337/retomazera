@@ -24,7 +24,6 @@ chrome.runtime.sendMessage({ tipo: 'info' }, ({ cfg, est, auto, hoje, autoNoite,
   $('noite').checked = cfg.noite !== false;
   $('ronda').checked = cfg.ronda !== false;
   $('avisos').checked = cfg.avisos !== false;
-  $('tudoMin').checked = !!cfg.tudoMinimizado;
   $('horaNoite').value = cfg.horaNoite ?? 21;
   mostrar(est, auto, hoje, autoNoite, autoRonda);
 });
@@ -32,7 +31,7 @@ chrome.runtime.onMessage.addListener((m) => { if (m.tipo === 'estado') mostrar(m
 
 $('salvar').onclick = () => {
   const cfg = { fontes: { whatsapp: $('whatsapp').checked, facebook: $('facebook').checked, olx: $('olx').checked, instagram: $('instagram').checked },
-    perfil: $('perfil').value.trim(), horaMin: Number($('horaMin').value || 6), espera: Number($('espera').value || 3), noite: $('noite').checked, ronda: $('ronda').checked, avisos: $('avisos').checked, tudoMinimizado: $('tudoMin').checked, horaNoite: Number($('horaNoite').value || 21),
+    perfil: $('perfil').value.trim(), horaMin: Number($('horaMin').value || 6), espera: Number($('espera').value || 3), noite: $('noite').checked, ronda: $('ronda').checked, avisos: $('avisos').checked, horaNoite: Number($('horaNoite').value || 21),
     ignorar: $('ignorar').value.split('\n').map((x) => x.trim()).filter(Boolean) };
   chrome.runtime.sendMessage({ tipo: 'salvar', cfg }, () => {
     chrome.runtime.sendMessage({ tipo: 'info' }, ({ est, auto, hoje, autoNoite, autoRonda }) => mostrar(est, auto, hoje, autoNoite, autoRonda));
