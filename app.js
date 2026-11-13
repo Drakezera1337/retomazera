@@ -147,7 +147,19 @@ function hojeIso() {
 function comValoresManuais(v) {
   let delta = 0, mudou = false;
   const a = S.acoes[v._chave] || {};
-  const g = a.concluida && a.gestao?.itens ? a.gestao.itens.slice() : [];
+  let g = a.concluida && a.gestao?.itens ? a.gestao.itens.slice() : [];
+  // concluída sem formulário ("Só concluir aqui" e lançada direto na Gestão): acha a venda pelo telefone
+  const direto = a.concluida && !g.length ? vendasDiretoNaGestao(v) : [];
+  if (direto.length) {
+    const its = (v.itens || []).length ? v.itens : [{}];
+    const itens = direto.map((d, i) => {
+      const it = its[i] || {}, m = S.acoes[`${v._chave}#${i}`]?.valor;
+      return { ...it, descricao: d.nome, valor: m != null && m !== '' ? Number(m) : d.preco_venda, _gestao: d };
+    });
+    const extra = its.slice(direto.length).filter((it) => Number(it.valor) > 0); // taxa de entrega etc.
+    const tudo = [...itens, ...extra];
+    return { ...v, itens: tudo, total: Math.round(tudo.reduce((s, it) => s + (Number(it.valor) || 0), 0) * 100) / 100 };
+  }
   const itens = (v.itens || []).map((it, i) => {
     const gi = g.findIndex((x) => x.descricao === it.descricao);
     const doForm = gi >= 0 ? g.splice(gi, 1)[0] : null;
@@ -163,6 +175,17 @@ function comValoresManuais(v) {
   if (!mudou) return v;
   const base = Number(v.total) || (v.itens || []).reduce((s, it) => s + (Number(it.valor) || 0), 0);
   return { ...v, itens, total: Math.round((base + delta) * 100) / 100 };
+}
+// vendas da Gestão com o telefone do cliente, da data da venda marcada até 7 dias depois (ou 3 antes)
+function vendasDiretoNaGestao(v) {
+  const tel = String(v.contato || '').replace(/\D/g, '').slice(-8);
+  if (tel.length !== 8 || !v.data) return [];
+  const ini = somarDias(v.data, -3), fim = somarDias(v.data, 7);
+  return (S.gestao.vendas || []).filter((x) => x.tel === tel && x.data_venda >= ini && x.data_venda <= fim);
+}
+function somarDias(iso, n) {
+  const [y, m, d] = iso.split('-').map(Number), dt = new Date(y, m - 1, d + n);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 }
 function salvarValorItem(chaveItem, txt) {
   const n = String(txt || '').trim() === '' ? null : Number(String(txt).replace(/\./g, '').replace(',', '.'));
@@ -501,6 +524,7 @@ function concluirVenda(chaveVenda, gestao) {
 }
 function seloGestao(chaveVenda) {
   const a = S.acoes[chaveVenda] || {}, l = S.lancadas[chaveVenda];
+  if (a.concluida && !a.gestao) return S.cards[chaveVenda] && vendasDiretoNaGestao(S.cards[chaveVenda]).length ? '<span class="chip vend">📒 Na Gestão</span>' : '';
   if (!a.concluida || !a.gestao) return '';
   if (!l || l.ts !== a.gestao.ts) return '<span class="chip media">⏳ Indo p/ Gestão</span>';  // relógio do celular ≠ do PC: compara o ts do formulário
   if (l.erro) return '<span class="chip alta">⚠️ Gestão</span>';

@@ -754,17 +754,27 @@ def lancadas_publicas():
 
 def opcoes_gestao():
     """Opções do formulário de venda: origens e os recebedores já usados em cada forma (mais usados primeiro)."""
-    rec = {}
+    rec, vendas = {}, []
     try:
         c = sqlite3.connect(GESTAO_DB, uri=True, timeout=10)
         for k in ("cartao", "pix", "fiado"):
             rec[k] = [{"tipo": t, "nome": n} for t, n, _ in c.execute(
                 f"select rec_{k}_tipo, trim(rec_{k}_nome), count(*) from produtos where pag_{k}=1 and coalesce(rec_{k}_tipo,'')!='' "
                 f"group by 1, 2 order by 3 desc, max(data_venda) desc limit 6")]
+        # vendas dos últimos dias: venda lançada direto na Gestão aparece no card (achada pelo telefone)
+        desde = time.strftime("%Y-%m-%d", time.localtime(time.time() - 15 * 86400))
+        for uid, nome, compra, reparo, pv, dv, tel in c.execute(
+                "select uid, nome, preco_compra, custo_reparo, preco_venda, data_venda, tel_comprador from produtos "
+                "where data_venda>=? and coalesce(preco_venda,0)>0", (desde,)):
+            dig = re.sub(r"\D", "", tel or "")[-8:]
+            if len(dig) == 8:
+                vendas.append({"uid": uid, "nome": (nome or "").strip()[:200], "familia": familia(nome or ""),
+                               "custo": round(float(compra or 0) + float(reparo or 0), 2),
+                               "preco_venda": float(pv), "data_venda": dv, "tel": dig})
         c.close()
     except sqlite3.Error as exc:
         print(f"[gestão] opções: {exc}")
-    return {"origens": ORIGENS_GESTAO, "recebedores": rec}
+    return {"origens": ORIGENS_GESTAO, "recebedores": rec, "vendas": vendas}
 
 
 def _num(v):
