@@ -163,7 +163,7 @@ function comValoresManuais(v) {
   const itens = (v.itens || []).map((it, i) => {
     const gi = g.findIndex((x) => x.descricao === it.descricao);
     const doForm = gi >= 0 ? g.splice(gi, 1)[0] : null;
-    if (doForm && S.acoes[`${v._chave}#${i}`]?.valor == null) {
+    if (doForm) { // o formulário lançado vale mais que o valor manual digitado antes (e traz o custo)
       mudou = true; delta += Number(doForm.preco_venda) - (Number(it.valor) || 0);
       return { ...it, valor: Number(doForm.preco_venda), _gestao: doForm };
     }
