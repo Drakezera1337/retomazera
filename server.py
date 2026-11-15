@@ -1182,6 +1182,102 @@ def turno_de(corpo):
     return ""
 
 
+# --------------------------------------------------------------------------- mesma pessoa em dois canais
+# Cliente do Facebook/OLX/Instagram que passa o número no chat e continua no WhatsApp: o servidor guarda
+# o número → conversa de origem (vinculos.json, fora do git) e marca as duas conversas no conversas.txt.
+ARQ_VINCULOS = os.path.join(BASE_DIR, "vinculos.json")
+_vinc_lock = threading.Lock()
+RE_FONE = re.compile(r"(?<!\d)(?:\+?55[\s.-]*)?\(?\s*([1-9]{2})\s*\)?[\s.-]*(9?)[\s.-]*(\d{4})[\s.-]*(\d{4})(?!\d)")
+
+
+def numeros_no_texto(texto):
+    """Números de celular/fixo brasileiros escritos numa mensagem → últimos 8 dígitos + número com DDD."""
+    saida = []
+    for ddd, nove, a, b in RE_FONE.findall(str(texto or "")):
+        if int(ddd) < 11:
+            continue
+        saida.append((a + b, ddd + nove + a + b))
+    return saida
+
+
+def ler_vinculos():
+    try:
+        with open(ARQ_VINCULOS, encoding="utf-8") as f:
+            v = json.load(f)
+        return v if isinstance(v, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def atualizar_vinculos(corpo):
+    """Acha números que o cliente passou no chat do marketplace e marca quando o número aparece no WhatsApp."""
+    fonte, data = corpo.get("fonte"), str(corpo.get("data") or "")
+    with _vinc_lock:
+        vinc, mudou = ler_vinculos(), False
+        for cv in corpo.get("conversas") or []:
+            if fonte == "whatsapp":
+                k = re.sub(r"\D", "", str(cv.get("contato") or ""))[-8:]
+                if len(k) == 8 and k in vinc and not vinc[k].get("whatsapp"):
+                    vinc[k]["whatsapp"] = {"nome": str(cv.get("nome") or "")[:80], "desde": data}
+                    mudou = True
+                continue
+            for m in cv.get("mensagens") or []:
+                if m.get("eu"):
+                    continue
+                for k, num in numeros_no_texto(m.get("texto")):
+                    if k in vinc and vinc[k].get("canal") == fonte:
+                        continue
+                    vinc[k] = {**vinc.get(k, {}), "canal": fonte, "nome": str(cv.get("nome") or "")[:80],
+                               "anuncio": str(cv.get("anuncio") or "")[:120], "numero": num,
+                               "em": m.get("data") or data}
+                    mudou = True
+        if mudou:
+            tmp = ARQ_VINCULOS + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(vinc, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, ARQ_VINCULOS)
+
+
+def preencher_vinculos_antigos():
+    """Na primeira vez, varre as coletas já guardadas (marketplaces antes do WhatsApp)."""
+    if os.path.exists(ARQ_VINCULOS):
+        return
+    arquivos = []
+    for raiz, _, nomes in os.walk(PASTA_COLETAS):
+        arquivos += [os.path.join(raiz, n) for n in nomes if n[:-5] in NOMES_FONTES and n.endswith(".json")]
+    arquivos.sort(key=lambda a: (os.path.basename(a) == "whatsapp.json", a))
+    for a in arquivos:
+        try:
+            with open(a, encoding="utf-8") as f:
+                atualizar_vinculos(json.load(f))
+        except (OSError, ValueError):
+            pass
+    if not os.path.exists(ARQ_VINCULOS):
+        with open(ARQ_VINCULOS, "w", encoding="utf-8") as f:
+            f.write("{}")
+    print(f"[vínculos] {len(ler_vinculos())} número(s) passado(s) em marketplace")
+
+
+def nota_vinculo(fonte, cv, vinc):
+    """Texto que vai no cabeçalho da conversa quando ela é da mesma pessoa de outro canal."""
+    if fonte == "whatsapp":
+        k = re.sub(r"\D", "", str(cv.get("contato") or ""))[-8:]
+        v = vinc.get(k) if len(k) == 8 else None
+        if v:
+            return (f" | MESMA PESSOA do {NOMES_FONTES.get(v['canal'], v['canal'])} (lá: \"{v.get('nome')}\""
+                    + (f", anúncio {v['anuncio']}" if v.get("anuncio") else "") + f"; passou o número em {v.get('em')})")
+        return ""
+    notas = []
+    for m in cv.get("mensagens") or []:
+        if m.get("eu"):
+            continue
+        for k, num in numeros_no_texto(m.get("texto")):
+            w = (vinc.get(k) or {}).get("whatsapp")
+            notas.append(f" | PASSOU O NÚMERO {num}: continua no WhatsApp"
+                         + (f" (já tem conversa lá como \"{w['nome']}\")" if w else " (ainda sem conversa no WhatsApp: 1º contato lá)"))
+    return notas[-1] if notas else ""
+
+
 def salvar_coleta(corpo):
     """Grava coletas/AAAA-MM-DD[/noite]/<fonte>.json e refaz o conversas.txt (todas as fontes juntas, para o Claude ler)."""
     data, fonte = str(corpo.get("data") or ""), str(corpo.get("fonte") or "")
@@ -1197,6 +1293,10 @@ def salvar_coleta(corpo):
         lotes = ler_dados().get("fontes_perfis", {})
         lotes[str(corpo.get("perfil") or "?")] = [f for f in corpo["lote"] if f in NOMES_FONTES]
         gravar_dados(fontes_perfis=lotes)
+    try:
+        atualizar_vinculos(corpo)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[vínculos] {exc}")
     gerar_texto(data, turno)
     if fonte == "whatsapp":
         try:
@@ -1222,6 +1322,7 @@ def gerar_texto(data, turno=""):
     """Texto compacto: cabeçalho por conversa e uma linha por mensagem (J = João, C = cliente)."""
     rotulo = " (NOITE)" if turno == "noite" else f" (RONDA DAS {turno.split(':')[1]}H)" if turno else ""
     linhas = [f"CONVERSAS DE {data}{rotulo} (J = João/loja, C = cliente)", ""]
+    vinc = ler_vinculos()
     for fonte, c in coletas_do_dia(data, turno).items():
         quando = time.strftime("%d/%m %H:%M", time.localtime((c.get("coletadoEm") or 0) / 1000))
         convs = c.get("conversas") or []
@@ -1240,6 +1341,7 @@ def gerar_texto(data, turno=""):
             if cv.get("anuncio"):
                 cab += f" | anúncio: {cv['anuncio']}"
             cab += f" | contato: {cv.get('contato') or '—'}"
+            cab += nota_vinculo(fonte, cv, vinc)
             if cv.get("rotulo"):
                 cab += f" | última atividade: {cv['rotulo']}"
             linhas.append(cab)
@@ -1956,6 +2058,7 @@ def main():
     threading.Thread(target=laco_gist, daemon=True).start()
     threading.Thread(target=laco_espera, daemon=True).start()
     threading.Timer(60, retomar_pendentes).start()
+    threading.Thread(target=preencher_vinculos_antigos, daemon=True).start()
     cfg = gist_cfg()
     print("=" * 60)
     print(" RETOMAZERA rodando!")
