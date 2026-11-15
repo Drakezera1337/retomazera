@@ -680,6 +680,87 @@ def espera_publica():
     return sorted(({**v, "chave": k} for k, v in ler_espera().items()), key=lambda v: v.get("desde") or "")
 
 
+# --------------------------------------------------------------------------- acordar o perfil do Chrome
+# A extensão só roda com o perfil do Chrome dela carregado. Se o João fecha a janela desse perfil, o Chrome
+# descarrega o perfil e as rondas param. Quando uma coleta está atrasada, o servidor abre o perfil em segundo
+# plano (--no-startup-window: sem janela; a extensão acorda e faz a coleta sozinha).
+EXT_ID = "gelgeedohiaddohndapaekejjogjgpja"
+RONDAS_H = [8, 10, 12, 14, 16, 18, 20, 22]
+CHROME_EXE = next((c for c in (os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+                               os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+                               os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"))
+                   if os.path.exists(c)), "")
+_acordar = {"tentativas": {}, "ultimo": 0}
+
+
+def perfil_da_extensao():
+    """Pasta do perfil do Chrome em que a extensão está configurada para coletar o WhatsApp."""
+    ud = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
+    try:
+        perfis = [n for n in os.listdir(ud) if n == "Default" or n.startswith("Profile ")]
+    except OSError:
+        return ""
+    for n in perfis:
+        pasta = os.path.join(ud, n, "Local Extension Settings", EXT_ID)
+        try:
+            dados = b"".join(open(os.path.join(pasta, a), "rb").read() for a in os.listdir(pasta)
+                             if a.endswith((".log", ".ldb")))
+        except OSError:
+            continue
+        if b'"whatsapp":true' in dados and b'"fontes"' in dados:
+            return n
+    return ""
+
+
+def coleta_atrasada():
+    """Qual coleta deveria ter chegado e não chegou ('' = nenhuma)."""
+    agora = time.localtime()
+    h, hoje = agora.tm_hour, time.strftime("%Y-%m-%d", agora)
+    if h < 6:
+        return ""
+    pasta = os.path.join(PASTA_COLETAS, hoje)
+    tem = lambda *p: os.path.isdir(os.path.join(pasta, *p)) and any(
+        a.endswith(".json") for a in os.listdir(os.path.join(pasta, *p)))
+    if not os.path.exists(os.path.join(pasta, "whatsapp.json")):
+        return f"{hoje}:dia"
+    if h >= 21:
+        return "" if tem("noite") else f"{hoje}:noite"
+    slot = max([x for x in RONDAS_H if x <= h], default=None)
+    if slot is None or agora.tm_min < 10 and h == slot:  # dá 10 min para a extensão fazer sozinha
+        return ""
+    return "" if tem("rondas", f"{slot:02d}") else f"{hoje}:ronda{slot}"
+
+
+def acordar_perfil():
+    falta = coleta_atrasada()
+    if not falta or not CHROME_EXE or (_acordar["tentativas"].get(falta) or 0) >= 3:
+        return
+    if time.time() - _acordar["ultimo"] < 25 * 60:
+        return
+    perfil = perfil_da_extensao()
+    if not perfil:
+        return
+    _acordar["ultimo"] = time.time()
+    _acordar["tentativas"][falta] = (_acordar["tentativas"].get(falta) or 0) + 1
+    try:
+        subprocess.Popen([CHROME_EXE, f"--profile-directory={perfil}", "--no-startup-window"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         creationflags=getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        print(f"[chrome] coleta atrasada ({falta}): abri o perfil '{perfil}' em segundo plano")
+    except OSError as exc:
+        print(f"[chrome] não consegui abrir o perfil: {exc}")
+
+
+def laco_acordar():
+    time.sleep(5 * 60)  # depois de ligar o PC, o Chrome abre sozinho e a extensão tenta primeiro
+    while True:
+        try:
+            acordar_perfil()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[chrome] {exc}")
+        time.sleep(60)
+
+
 def laco_espera():
     assinatura = None
     while True:
@@ -2059,6 +2140,7 @@ def main():
     threading.Thread(target=laco_espera, daemon=True).start()
     threading.Timer(60, retomar_pendentes).start()
     threading.Thread(target=preencher_vinculos_antigos, daemon=True).start()
+    threading.Thread(target=laco_acordar, daemon=True).start()
     cfg = gist_cfg()
     print("=" * 60)
     print(" RETOMAZERA rodando!")
