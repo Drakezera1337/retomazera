@@ -1359,6 +1359,36 @@ def nota_vinculo(fonte, cv, vinc):
     return notas[-1] if notas else ""
 
 
+def juntar_com_anterior(arq, corpo):
+    """A mesma ronda coletada de novo (extensão recarregada, nova tentativa) não apaga o que já tinha chegado:
+    junta as conversas (pelo contato/nome) e as mensagens sem repetir."""
+    try:
+        with open(arq, encoding="utf-8") as f:
+            ant = json.load(f)
+    except (OSError, ValueError):
+        return corpo
+    chave = lambda cv: str(cv.get("contato") or "") if re.search(r"\d{8}", str(cv.get("contato") or "")) else str(cv.get("nome") or "")
+    convs = {chave(cv): cv for cv in ant.get("conversas") or []}
+    for cv in corpo.get("conversas") or []:
+        k = chave(cv)
+        if k not in convs:
+            convs[k] = cv
+            continue
+        vistas, msgs = set(), []
+        for m in (convs[k].get("mensagens") or []) + (cv.get("mensagens") or []):
+            mk = (m.get("data"), m.get("hora"), bool(m.get("eu")), m.get("texto"))
+            if mk not in vistas:
+                vistas.add(mk)
+                msgs.append(m)
+        convs[k] = {**convs[k], **cv, "mensagens": msgs}
+    novo = {**corpo, "conversas": list(convs.values())}
+    if ant.get("desde") and corpo.get("desde"):
+        novo["desde"] = min(ant["desde"], corpo["desde"])
+    if corpo.get("erro") and ant.get("conversas") and not ant.get("erro"):
+        novo.pop("erro", None)
+    return novo
+
+
 def salvar_coleta(corpo):
     """Grava coletas/AAAA-MM-DD[/noite]/<fonte>.json e refaz o conversas.txt (todas as fontes juntas, para o Claude ler)."""
     data, fonte = str(corpo.get("data") or ""), str(corpo.get("fonte") or "")
@@ -1367,6 +1397,8 @@ def salvar_coleta(corpo):
         raise ValueError("data ou fonte inválida")
     pasta = pasta_coleta(data, turno)
     os.makedirs(pasta, exist_ok=True)
+    if turno.startswith("ronda:"):
+        corpo = juntar_com_anterior(os.path.join(pasta, fonte + ".json"), corpo)
     with open(os.path.join(pasta, fonte + ".json"), "w", encoding="utf-8") as f:
         json.dump(corpo, f, ensure_ascii=False, indent=1)
     # cada perfil do Chrome diz quais fontes coleta: a análise espera a soma de todos

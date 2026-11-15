@@ -191,7 +191,8 @@ async function avisarProgresso(c, origem, prog, fim, rodada) {
 // não (minimizado o Chrome congela a página: veio 10 mensagens em vez de 316), então ele usa a janela sem foco.
 // Nem com o Chrome aberto com --disable-backgrounding-occluded-windows/--disable-renderer-backgrounding o WhatsApp
 // funciona minimizado (2º teste: 5 mensagens em vez de 326): janela minimizada não desenha a página.
-const MINIMIZA = new Set(['facebook', 'instagram']);
+// 15/11: minimizado travou o Facebook/Instagram nas rondas: volta tudo para a janela normal sem foco (como antes)
+const MINIMIZA = new Set();
 function comPrazo(p, ms) {
   let t;
   return Promise.race([p, new Promise((_, rej) => { t = setTimeout(() => rej(new Error(`demorou mais de ${Math.round(ms / 60000)} min`)), ms); })])
@@ -284,7 +285,7 @@ async function coletar(origem, rodada = '') {
           // minimizada às vezes a página não desenha e o extrator fica parado para sempre (15/11: travou a ronda
           // inteira no Facebook/Instagram). Com prazo; se não vier, tenta de novo com a janela normal sem foco.
           const rodar = async () => {
-            const [res] = await comPrazo(chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func, args: [desde, c.ignorar || []] }), 150000);
+            const [res] = await comPrazo(chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func, args: [desde, c.ignorar || []] }), 10 * 60000);
             return (res && res.result) || { erro: 'sem resposta do extrator', conversas: [] };
           };
           try { r = await rodar(); } catch (e) { r = { erro: String(e.message || e), conversas: [] }; }
