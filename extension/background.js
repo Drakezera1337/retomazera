@@ -170,7 +170,7 @@ function esperarCarregar(tabId, ms = 60000) {
 const ICONE = { aguardando: '⏸️', coletando: '⏳', ok: '✅', erro: '❌' };
 async function avisarProgresso(c, origem, prog, fim, rodada) {
   if (c.avisos === false) return;
-  if (origem === 'ronda' && !fim) return; // ronda: só um aviso discreto no fim
+  // ronda também mostra o progresso (sem som), para saber que está andando
   const turno = origem === 'noite' ? 'da noite' : origem === 'manual' ? 'manual' : origem === 'ronda' ? `ronda das ${Number(rodada)}h` : 'da manhã';
   const linhas = Object.entries(prog).map(([k, p]) => `${FONTES[k].nome} ${ICONE[p.estado]} ${p.estado === 'ok' ? `OK (${p.n} conversa${p.n === 1 ? '' : 's'})` : p.estado === 'erro' ? `erro: ${p.msg}` : p.estado}`);
   const titulo = fim
@@ -192,6 +192,11 @@ async function avisarProgresso(c, origem, prog, fim, rodada) {
 // Nem com o Chrome aberto com --disable-backgrounding-occluded-windows/--disable-renderer-backgrounding o WhatsApp
 // funciona minimizado (2º teste: 5 mensagens em vez de 326): janela minimizada não desenha a página.
 const MINIMIZA = new Set(['facebook', 'instagram']);
+function comPrazo(p, ms) {
+  let t;
+  return Promise.race([p, new Promise((_, rej) => { t = setTimeout(() => rej(new Error(`demorou mais de ${Math.round(ms / 60000)} min`)), ms); })])
+    .finally(() => clearTimeout(t));
+}
 async function janelaDeFundo(minimizada) {
   return minimizada
     ? chrome.windows.create({ url: 'about:blank', focused: false, state: 'minimized' })
@@ -276,8 +281,21 @@ async function coletar(origem, rodada = '') {
             await avisarProgresso(c, origem, { ...prog, [k]: { estado: 'coletando' } }, false);
           }
         } else {
-          const [res] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func, args: [desde, c.ignorar || []] });
-          r = (res && res.result) || { erro: 'sem resposta do extrator', conversas: [] };
+          // minimizada às vezes a página não desenha e o extrator fica parado para sempre (15/11: travou a ronda
+          // inteira no Facebook/Instagram). Com prazo; se não vier, tenta de novo com a janela normal sem foco.
+          const rodar = async () => {
+            const [res] = await comPrazo(chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: f.func, args: [desde, c.ignorar || []] }), 150000);
+            return (res && res.result) || { erro: 'sem resposta do extrator', conversas: [] };
+          };
+          try { r = await rodar(); } catch (e) { r = { erro: String(e.message || e), conversas: [] }; }
+          if (r.erro && minimizar) {
+            await chrome.windows.update(janela.id, { state: 'normal', focused: false, width: 1280, height: 900 }).catch(() => {});
+            janela.minimizada = false;
+            await chrome.tabs.reload(tabId).catch(() => {});
+            await esperarCarregar(tabId);
+            await new Promise((ok) => setTimeout(ok, 4000));
+            try { r = await rodar(); } catch (e) { r = { erro: String(e.message || e), conversas: [] }; }
+          }
         }
         r = r || { erro: 'sem resposta do extrator', conversas: [] };
         delete r.feitos; delete r.restantes;
