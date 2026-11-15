@@ -166,7 +166,8 @@ function comValoresManuais(v) {
     });
     const extra = its.slice(direto.length).filter((it) => Number(it.valor) > 0); // taxa de entrega etc.
     const tudo = [...itens, ...extra];
-    return { ...v, itens: tudo, total: Math.round(tudo.reduce((s, it) => s + (Number(it.valor) || 0), 0) * 100) / 100 };
+    const comp = [...new Set(direto.map((d) => d.comprador).filter(Boolean))];
+    return { ...v, ...(comp.length === 1 && !foneBR(v) ? { nome: comp[0] } : {}), itens: tudo, total: Math.round(tudo.reduce((s, it) => s + (Number(it.valor) || 0), 0) * 100) / 100 };
   }
   const itens = (v.itens || []).map((it, i) => {
     const gi = g.findIndex((x) => x.descricao === it.descricao);
@@ -184,12 +185,27 @@ function comValoresManuais(v) {
   const base = Number(v.total) || (v.itens || []).reduce((s, it) => s + (Number(it.valor) || 0), 0);
   return { ...v, itens, total: Math.round((base + delta) * 100) / 100 };
 }
-// vendas da Gestão com o telefone do cliente, da data da venda marcada até 7 dias depois (ou 3 antes)
+// vendas da Gestão com o telefone do cliente, da data da venda marcada até 7 dias depois (ou 3 antes).
+// Conversa sem telefone (Facebook, Instagram, OLX): mesma origem e o mesmo produto (ex.: "FC25"), na mesma janela
+const PALAVRA_COMUM = new Set(['ps2', 'ps3', 'ps4', 'ps5', 'xbox', 'one', 'series', 'slim', 'pro', 'fat', 'jogo', 'jogos', 'controle',
+  'controles', 'original', 'orig', 'ctrl', 'cabos', 'cabo', 'com', 'sem', 'para', 'pra', 'vendido', 'mais', 'usado', 'novo', 'game',
+  'sports', 'nintendo', 'switch', 'console', 'vermelho', 'preto', 'branco', 'azul']);
+function palavrasProduto(txt) {
+  return new Set(String(txt || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/(?<![a-z])([a-z]{2,})\s+(\d{1,4})(?!\d)/g, '$1$2').split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 3 && !PALAVRA_COMUM.has(w) && !/^\d+(ctrl|gb|tb)?$/.test(w)));
+}
 function vendasDiretoNaGestao(v) {
-  const tel = String(v.contato || '').replace(/\D/g, '').slice(-8);
-  if (tel.length !== 8 || !v.data) return [];
+  if (!v.data) return [];
   const ini = somarDias(v.data, -3), fim = somarDias(v.data, 7);
-  return (S.gestao.vendas || []).filter((x) => x.tel === tel && x.data_venda >= ini && x.data_venda <= fim);
+  const janela = (S.gestao.vendas || []).filter((x) => x.data_venda >= ini && x.data_venda <= fim);
+  const tel = String(v.contato || '').replace(/\D/g, '').slice(-8);
+  if (tel.length === 8 && /^\+?\d[\d\s()-]*$/.test(String(v.contato).trim())) return janela.filter((x) => x.tel === tel);
+  const origem = ORIGEM_CANAL[(v.canal || '').toLowerCase()];
+  const st = S.acoes[v._chave] || {};
+  const minhas = palavrasProduto([...(v.itens || []).map((it) => it.descricao), st.obs].join(' '));
+  if (!origem || !minhas.size) return [];
+  return janela.filter((x) => x.origem === origem && [...palavrasProduto(x.nome)].some((w) => minhas.has(w)));
 }
 function somarDias(iso, n) {
   const [y, m, d] = iso.split('-').map(Number), dt = new Date(y, m - 1, d + n);
