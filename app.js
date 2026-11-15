@@ -138,6 +138,14 @@ function salvarAcoes(novas) {
 // Junta as de todas as listas (a lista mais nova vale, se o cliente remarcou) e mostra as de hoje.
 // atalho para outra aba (fila, vendas, retornos): botão largo e legível no tema escuro
 const atalho = (href, icone, titulo, sub) => `<a class="atalho" href="${href}"><span class="atalho-ic">${icone}</span><span class="atalho-txt"><b>${esc(titulo)}</b><small>${esc(sub)}</small></span><span class="atalho-seta">›</span></a>`;
+// a mensagem sugerida vem com o cumprimento da hora em que a análise rodou: troca pelo de agora
+function saudacaoAgora() { const h = new Date().getHours(); return h >= 5 && h < 12 ? 'Bom dia' : h >= 12 && h < 18 ? 'Boa tarde' : 'Boa noite'; }
+function comSaudacao(msg) {
+  return String(msg || '').replace(/^(\W*)(bom dia|boa tarde|boa noite)/i, (_, pre, s) => {
+    const n = saudacaoAgora();
+    return pre + (s[0] === s[0].toLowerCase() ? n.toLowerCase() : n);
+  });
+}
 function hojeIso() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -804,7 +812,7 @@ function cartaoOferta(o) {
     ${(S.fotosOfertas[o.chave] || []).length ? `<div class="fotos-oferta">${S.fotosOfertas[o.chave].map((f, i) => `<img src="${f}" alt="Foto ${i + 1} enviada pelo cliente" loading="lazy" data-ampliar="${esc(o.chave)}" data-i="${i}">`).join('')}</div>` : ''}
     ${refTxt}
     ${o.ultimaMsg ? `<p class="sub">“${esc(o.ultimaMsg)}”${o.quando ? ` · ${esc(o.quando)}` : ''} · ${esc(dataBR(o.atualizado, false))}</p>` : ''}
-    ${o.mensagem ? `<div class="msg">${esc(o.mensagem)}</div>` : ''}
+    ${o.mensagem ? `<div class="msg">${esc(comSaudacao(o.mensagem))}</div>` : ''}
     <div class="acoes">
       ${botaoConversa(link && link.split('?')[0])}
       ${o.mensagem ? `<button class="btn" data-copiar="${esc(o.chave)}">📋 Copiar resposta</button>` : ''}
@@ -908,7 +916,7 @@ function linkConversa(x) {
     const dig = contato.replace(/\D/g, '');
     if (dig.length >= 10) {
       const num = dig.length <= 11 ? '55' + dig : dig;
-      return `https://wa.me/${num}${x.mensagem ? `?text=${encodeURIComponent(x.mensagem)}` : ''}`;
+      return `https://wa.me/${num}${x.mensagem ? `?text=${encodeURIComponent(comSaudacao(x.mensagem))}` : ''}`;
     }
   }
   if (/^https:\/\//.test(contato)) return contato;
@@ -948,7 +956,7 @@ function cartao(x) {
     ${x.produto ? `<p><b>${esc(x.produto)}</b>${x.quando ? ` <span class="sub">· última msg ${esc(x.quando)}</span>` : ''}</p>` : ''}
     ${x.situacao ? `<p><span class="rot">Onde parou</span>${esc(x.situacao)}</p>` : ''}
     ${x.motivo ? `<p><span class="rot">Por que chamar</span>${esc(x.motivo)}</p>` : ''}
-    ${x.mensagem ? `<span class="rot">Sugestão de mensagem</span><div class="msg">${esc(x.mensagem)}</div>` : ''}
+    ${x.mensagem ? `<span class="rot">Sugestão de mensagem</span><div class="msg">${esc(comSaudacao(x.mensagem))}</div>` : ''}
     <div class="acoes">
       ${x.mensagem ? `<button class="btn" data-copiar="${esc(chave)}">📋 Copiar</button>` : ''}
       ${botaoConversa(link)}
@@ -1294,7 +1302,7 @@ document.addEventListener('click', async (e) => {
   const c = e.target.closest('[data-copiar]');
   if (c) {
     const x = S.cards[c.dataset.copiar];
-    try { await navigator.clipboard.writeText(x?.mensagem || ''); toast('Mensagem copiada'); } catch { toast('Não consegui copiar'); }
+    try { await navigator.clipboard.writeText(comSaudacao(x?.mensagem)); toast('Mensagem copiada'); } catch { toast('Não consegui copiar'); }
     return;
   }
   const amp = e.target.closest('[data-ampliar]');
