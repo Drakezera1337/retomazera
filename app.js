@@ -232,7 +232,7 @@ function blocoUnidadesVenda(v) {
   if (!S.estoque.length) return '';
   const aloc = alocarVendas();
   return (v.itens || []).map((it, i) => ({ it, chave: `${v._chave}#${i}` })).map(({ it, chave }) => {
-    const fam = S.estoque.find((u) => (u.atende || []).includes(chave))?.familia;
+    const fam = !ehServico(it) && S.estoque.find((u) => (u.atende || []).includes(chave))?.familia;
     if (!fam) return '';
     const u = aloc.porItem[chave];
     const outras = S.estoque.filter((x) => x.familia === fam && x !== u && (!aloc.porUid[x.uid] || aloc.porUid[x.uid].chave === chave));
@@ -265,7 +265,8 @@ function cartaoVenda(v) {
 // lucro da venda no resumo: só quando o custo do videogame é conhecido (Gestão ou unidade escolhida)
 function lucroVenda(v) {
   const r = resultadoVendas([v]);
-  if (!r.fat || (!r.custo && !(v.itens || []).some((it) => it._gestao))) return null;
+  const conhecido = r.custo || (v.itens || []).some((it) => it._gestao) || (!r.semCusto && (v.itens || []).some(ehServico));
+  if (!r.fat || !conhecido) return null;
   return Math.round(r.lucro * 100) / 100;
 }
 const lucroHtml = (l) => `<b class="${l >= 0 ? 'lucro' : 'prejuizo'}">${l >= 0 ? '+' : ''}${esc(brlV(l))}</b>`;
@@ -629,9 +630,12 @@ function blocoChegou() {
 // primeira unidade que o atende, pulando as que o João desvinculou dele (acoes[cliente].semUnidade).
 // Vendas marcadas reservam primeiro a unidade (cada videogame da venda): a que o João escolheu à mão
 // (acoes[item].uid), senão a de preço igual ao combinado, disponível antes de chegando, comprada há mais tempo.
+// serviço (limpeza, manutenção, conserto...) não tira videogame do estoque e não tem custo: é só lucro
+const SERVICO = /servi[cç]o|limpeza|manuten[cç][aã]o|conserto|reparo|troca de pasta/i;
+const ehServico = (it) => SERVICO.test((it && it.descricao) || '');
 function itensConsoleVenda(v) {
   return (v.itens || []).map((it, i) => ({ it, chave: `${v._chave}#${i}` }))
-    .filter(({ chave }) => S.estoque.some((u) => (u.atende || []).includes(chave)));
+    .filter(({ it, chave }) => !ehServico(it) && S.estoque.some((u) => (u.atende || []).includes(chave)));
 }
 function alocarVendas() {
   const porUid = {}, porItem = {};
@@ -871,12 +875,12 @@ function resultadoVendas(lista) {
   const aloc = alocarVendas();
   let fat = 0, custo = 0, semCusto = 0;
   for (const v of lista) {
-    const itens = (v.itens || []).map((it, i) => ({ it, u: aloc.porItem[`${v._chave}#${i}`] }));
+    const itens = (v.itens || []).map((it, i) => ({ it, u: ehServico(it) ? null : aloc.porItem[`${v._chave}#${i}`] }));
     fat += Number(v.total) || itens.reduce((s, x) => s + (Number(x.it.valor) || 0), 0);
     for (const { it, u } of itens) {
       if (it._gestao) custo += Number(it._gestao.custo) || 0;
       else if (u) custo += Number(u.custo) || 0;
-      else if (!/^\W*(taxa|frete|entrega)/i.test(it.descricao || '')) semCusto += 1;
+      else if (!ehServico(it) && !/^\W*(taxa|frete|entrega)/i.test(it.descricao || '')) semCusto += 1;
     }
   }
   return { fat, custo, lucro: fat - custo, semCusto };

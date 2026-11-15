@@ -495,6 +495,10 @@ def miniatura(caminho):
     return _miniaturas[chave]
 
 
+# serviço (limpeza, manutenção, conserto...) não usa videogame do estoque
+SERVICO = re.compile(r"servi[cç]o|limpeza|manuten[cç][aã]o|conserto|reparo|troca de pasta", re.I)
+
+
 def itens_de_vendas(acoes):
     """Videogames das vendas marcadas (a lista mais nova de cada cliente vale), de 3 dias atrás em diante:
     [(chave do item 'venda:<cliente>:<data>#<i>', família, descrição)]. Acessório/taxa não entra."""
@@ -515,7 +519,7 @@ def itens_de_vendas(acoes):
         for i, it in enumerate(v.get("itens") or []):
             desc = str((it or {}).get("descricao") or "")
             fam = familia(desc)
-            if fam and not nao_console.search(desc):
+            if fam and not nao_console.search(desc) and not SERVICO.search(desc):
                 saida.append((f"{vk}#{i}", fam, desc))
     return saida
 
