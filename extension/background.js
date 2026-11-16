@@ -329,7 +329,8 @@ async function coletar(origem, rodada = '') {
       }
     }
   } finally {
-    if (janela) await chrome.windows.remove(janela.id).catch(() => {});
+    // anota que a coleta terminou ANTES de fechar a janela: com o perfil aberto em segundo plano, fechar a única
+    // janela faz o Chrome descarregar o perfil e a anotação se perdia (16/11: a ronda das 14h rodou duas vezes)
     if (ativas.length) await avisarProgresso(c, origem, prog, true, rodada);
     // só o perfil principal (o do WhatsApp) acompanha a análise, para não avisar duas vezes
     if (algumaOk && c.fontes.whatsapp) {
@@ -354,6 +355,7 @@ async function coletar(origem, rodada = '') {
     clearInterval(vivo);
     rodando = false;
     await estado({ rodando: false, atual: '', fim: Date.now() });
+    if (janela) await chrome.windows.remove(janela.id).catch(() => {});
   }
 }
 
