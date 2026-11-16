@@ -34,10 +34,17 @@ async function inicioNavegador() {
   await chrome.storage.session.set({ abriuEm: agora });
   return agora;
 }
+// o servidor abre o perfil numa janela com /acordar quando a extensão não dá sinal: acordou, fecha
+async function fecharJanelaAcordar() {
+  const abas = await chrome.tabs.query({ url: ['http://127.0.0.1/acordar*', 'http://localhost/acordar*'] }).catch(() => []);
+  for (const t of abas) await chrome.tabs.remove(t.id).catch(() => {});
+}
+chrome.runtime.onStartup.addListener(() => setTimeout(fecharJanelaAcordar, 3000));
 async function verificar() {
   const c = await config();
   // o perfil que coleta o WhatsApp avisa o servidor que está carregado (se parar de avisar, o servidor o abre)
   if (c.fontes.whatsapp) fetch(`${SERVIDOR}/api/ping`).catch(() => {});
+  fecharJanelaAcordar();
   if (!Object.values(c.fontes).some(Boolean) || rodando) return;
   const agora = new Date();
   if (agora.getHours() < (c.horaMin ?? 6)) return;

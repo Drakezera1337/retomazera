@@ -728,14 +728,36 @@ def coleta_atrasada():
     slot = max([x for x in RONDAS_H if x <= h], default=None)
     if slot is None or agora.tm_min < 10 and h == slot:  # dá 10 min para a extensão fazer sozinha
         return ""
+    inicio_slot = time.mktime((agora.tm_year, agora.tm_mon, agora.tm_mday, slot, 0, 0, 0, 0, -1))
+    if os.path.getmtime(os.path.join(pasta, "whatsapp.json")) > inicio_slot - 45 * 60:
+        return ""  # a coleta do dia acabou de cobrir esse horário (a extensão pula essa ronda)
     return "" if tem("rondas", f"{slot:02d}") else f"{hoje}:ronda{slot}"
+
+
+def extensao_ativa():
+    """A extensão deu sinal nos últimos 3 min? (ping, gravação no armazenamento dela ou coleta chegando)."""
+    agora = time.time()
+    if agora - _acordar["ping"] < 3 * 60:
+        return True
+    perfil = perfil_da_extensao()
+    pasta = os.path.join(os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data"), perfil, "Local Extension Settings", EXT_ID)
+    try:
+        if perfil and any(agora - os.path.getmtime(os.path.join(pasta, a)) < 3 * 60 for a in os.listdir(pasta)):
+            return True
+    except OSError:
+        pass
+    hoje = os.path.join(PASTA_COLETAS, time.strftime("%Y-%m-%d"))
+    for raiz, _, nomes in os.walk(hoje):
+        if any(n.endswith(".json") and agora - os.path.getmtime(os.path.join(raiz, n)) < 8 * 60 for n in nomes):
+            return True  # uma coleta está chegando agora
+    return False
 
 
 def acordar_perfil():
     """Coleta atrasada e a extensão sem dar sinal (ping) há 3 min: carrega o perfil dela. 1ª vez sem janela
     (--no-startup-window); se mesmo assim ela não der sinal, abre o perfil numa janela minimizada."""
     falta = coleta_atrasada()
-    if not falta or not CHROME_EXE or time.time() - _acordar["ping"] < 3 * 60:
+    if not falta or not CHROME_EXE or extensao_ativa():
         return
     n = _acordar["tentativas"].get(falta) or 0
     if n >= 4 or time.time() - _acordar["ultimo"] < (4 * 60 if n == 1 else 20 * 60):
@@ -747,7 +769,8 @@ def acordar_perfil():
     _acordar["ultimo"] = time.time()
     _acordar["tentativas"][falta] = n + 1
     com_janela = n >= 1  # a tentativa sem janela não fez a extensão acordar
-    args = [CHROME_EXE, f"--profile-directory={perfil}"] + (["--new-window", "about:blank"] if com_janela else ["--no-startup-window"])
+    # a página /acordar avisa o que é; a extensão (3.6+) fecha essa janela assim que acorda
+    args = [CHROME_EXE, f"--profile-directory={perfil}"] + (["--new-window", f"http://127.0.0.1:{PORT}/acordar"] if com_janela else ["--no-startup-window"])
     try:
         subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True,
                          creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
@@ -1994,6 +2017,16 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/ping":  # a extensão avisa a cada minuto que o perfil dela está carregado
             _acordar["ping"] = time.time()
             return self._json({"ok": True})
+        if path == "/acordar":  # janela aberta pelo servidor para carregar o perfil da extensão
+            corpo = ("<!doctype html><meta charset=utf-8><title>Retomazera</title><body style='font:16px sans-serif;"
+                     "padding:40px;background:#111;color:#eee'><h2>Retomazera: abrindo a coleta</h2><p>Esta janela foi aberta "
+                     "para a extensão acordar e fazer a coleta. Ela fecha sozinha; se não fechar, pode fechar.</p>").encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(corpo)))
+            self.end_headers()
+            self.wfile.write(corpo)
+            return
         if path == "/api/status":
             return self._json(self.status_json())
         if path == "/api/lembretes":
