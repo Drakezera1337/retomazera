@@ -36,6 +36,8 @@ async function inicioNavegador() {
 }
 async function verificar() {
   const c = await config();
+  // o perfil que coleta o WhatsApp avisa o servidor que está carregado (se parar de avisar, o servidor o abre)
+  if (c.fontes.whatsapp) fetch(`${SERVIDOR}/api/ping`).catch(() => {});
   if (!Object.values(c.fontes).some(Boolean) || rodando) return;
   const agora = new Date();
   if (agora.getHours() < (c.horaMin ?? 6)) return;

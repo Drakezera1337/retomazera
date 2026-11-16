@@ -690,7 +690,7 @@ CHROME_EXE = next((c for c in (os.path.expandvars(r"%ProgramFiles%\Google\Chrome
                                os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
                                os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"))
                    if os.path.exists(c)), "")
-_acordar = {"tentativas": {}, "ultimo": 0}
+_acordar = {"tentativas": {}, "ultimo": 0, "ping": 0, "modo": {}}
 
 
 def perfil_da_extensao():
@@ -732,27 +732,33 @@ def coleta_atrasada():
 
 
 def acordar_perfil():
+    """Coleta atrasada e a extensão sem dar sinal (ping) há 3 min: carrega o perfil dela. 1ª vez sem janela
+    (--no-startup-window); se mesmo assim ela não der sinal, abre o perfil numa janela minimizada."""
     falta = coleta_atrasada()
-    if not falta or not CHROME_EXE or (_acordar["tentativas"].get(falta) or 0) >= 3:
+    if not falta or not CHROME_EXE or time.time() - _acordar["ping"] < 3 * 60:
         return
-    if time.time() - _acordar["ultimo"] < 25 * 60:
+    n = _acordar["tentativas"].get(falta) or 0
+    if n >= 4 or time.time() - _acordar["ultimo"] < (4 * 60 if n == 1 else 20 * 60):
         return
     perfil = perfil_da_extensao()
     if not perfil:
+        print(f"[chrome] {time.strftime('%H:%M')} coleta atrasada ({falta}), mas não achei o perfil da extensão")
         return
     _acordar["ultimo"] = time.time()
-    _acordar["tentativas"][falta] = (_acordar["tentativas"].get(falta) or 0) + 1
+    _acordar["tentativas"][falta] = n + 1
+    com_janela = n >= 1  # a tentativa sem janela não fez a extensão acordar
+    args = [CHROME_EXE, f"--profile-directory={perfil}"] + (["--new-window", "about:blank"] if com_janela else ["--no-startup-window"])
     try:
-        subprocess.Popen([CHROME_EXE, f"--profile-directory={perfil}", "--no-startup-window"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         creationflags=getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        print(f"[chrome] coleta atrasada ({falta}): abri o perfil '{perfil}' em segundo plano")
+        subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True,
+                         creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        print(f"[chrome] {time.strftime('%H:%M')} coleta atrasada ({falta}): abri o perfil '{perfil}' "
+              + ("numa janela (sem janela não acordou)" if com_janela else "em segundo plano"))
     except OSError as exc:
         print(f"[chrome] não consegui abrir o perfil: {exc}")
 
 
 def laco_acordar():
-    time.sleep(5 * 60)  # depois de ligar o PC, o Chrome abre sozinho e a extensão tenta primeiro
+    time.sleep(4 * 60)  # depois de ligar o PC, o Chrome abre sozinho e a extensão tenta primeiro
     while True:
         try:
             acordar_perfil()
@@ -1985,6 +1991,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
+        if path == "/api/ping":  # a extensão avisa a cada minuto que o perfil dela está carregado
+            _acordar["ping"] = time.time()
+            return self._json({"ok": True})
         if path == "/api/status":
             return self._json(self.status_json())
         if path == "/api/lembretes":
