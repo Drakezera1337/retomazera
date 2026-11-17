@@ -864,8 +864,23 @@ function telaComprar() {
 
 function telaRetornos() {
   const futuros = S.retornos.filter((r) => r.data >= hojeIso() && !acaoDe(r).excluido);
+  // agrupado por data (data grande no topo de cada grupo, recolhível; lembra os abertos no aparelho)
+  const porData = {};
+  for (const r of futuros) (porData[r.data] = porData[r.data] || []).push(r);
+  const grupos = Object.keys(porData).sort().map((d) => {
+    const lista = porData[d];
+    const [y, m, dd] = d.split('-').map(Number);
+    const dt = new Date(y, m - 1, dd);
+    const dias = Math.round((dt - new Date(new Date().setHours(0, 0, 0, 0))) / 864e5);
+    const quando = dias === 0 ? 'hoje' : dias === 1 ? 'amanhã' : `em ${dias} dias`;
+    const semana = dt.toLocaleDateString('pt-BR', { weekday: 'long' }).replace(/^./, (c) => c.toUpperCase());
+    return `<details class="grupo-fila grupo-data" data-grupo="retornosAbertos" data-fam="${esc(d)}" ${grupoAberto('retornosAbertos', d) ? 'open' : ''}>
+      <summary><span class="gd-data">${String(dd).padStart(2, '0')}/${String(m).padStart(2, '0')}</span>
+        <span class="gd-info"><b>${esc(semana)}</b><span class="gf-n">${esc(quando)} · ${lista.length} ${lista.length === 1 ? 'cliente' : 'clientes'}</span></span></summary>
+      ${lista.map((r) => cartao({ ...r, prioridade: 'media', situacao: r.pedido || '' })).join('')}</details>`;
+  }).join('');
   return `<h1>📅 Retornos combinados</h1><p class="sub">Clientes que pediram para ser chamados numa data. No dia, aparecem na aba Hoje.</p>
-    ${futuros.length ? futuros.map((r) => cartao({ ...r, prioridade: 'media', situacao: `Chamar em ${dataBR(r.data)} · ${r.pedido || ''}` })).join('') : '<div class="vazio">Nenhum retorno combinado.</div>'}`;
+    ${futuros.length ? grupos : '<div class="vazio">Nenhum retorno combinado.</div>'}`;
 }
 
 function telaVendas() {

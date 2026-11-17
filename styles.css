@@ -169,3 +169,8 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 /* venda recolhível: o card fica dentro do grupo, sem borda dupla */
 .grupo-venda > summary { font-size: 1rem; }
 .grupo-venda > .item.venda { margin: 0 0 4px; border: 0; box-shadow: none; padding-left: 0; padding-right: 0; }
+
+/* retornos combinados agrupados por data: a data bem grande */
+.grupo-data > summary { gap: 14px; flex-wrap: nowrap; }
+.grupo-data .gd-data { font-size: 2.1rem; font-weight: 800; letter-spacing: .5px; line-height: 1; color: var(--verde, #19c37d); min-width: 4.2ch; }
+.grupo-data .gd-info { display: flex; flex-direction: column; gap: 2px; }
