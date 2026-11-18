@@ -612,6 +612,8 @@ function blocoNoite() {
 }
 
 // ---------------------------------------------------------------- retornos combinados ("me chama mês que vem")
+// cliente que comprou depois de combinar o retorno não precisa mais ser chamado
+function vendidoDepois(r) { const a = S.acoes[chaveCliente(r)] || {}; return Boolean(a.vendido && (a.vendidoEm || 0) >= (r.ts || 0)); }
 function blocoRetornos(chavesDoDia) {
   const hoje = hojeIso();
   const semana = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
@@ -620,7 +622,7 @@ function blocoRetornos(chavesDoDia) {
     .map((r) => ({ ...r, prioridade: 'alta', situacao: `Combinado em ${dataBR(r.combinadoEm, false)}: ${r.pedido || ''}`,
       quando: r.data < hoje ? `era ${dataBR(r.data, false)}` : '', _listaEm: new Date(r.data + 'T00:00:00').getTime() }))
     .filter((r) => { const a = acaoDe(r); return !a.excluido && !a.vendido && !a.chamado; });
-  const futuros = S.retornos.filter((r) => r.data > hoje && !acaoDe(r).excluido);
+  const futuros = S.retornos.filter((r) => r.data > hoje && !acaoDe(r).excluido && !vendidoDepois(r));
   if (!devidos.length && !futuros.length) return '';
   return `${devidos.length ? `<h2 style="margin:4px 0 8px">📅 Combinado de chamar hoje (${devidos.length})</h2>${devidos.map(cartao).join('')}` : ''}
     ${futuros.length ? atalho('#/retornos', '📅', `${futuros.length} ${futuros.length === 1 ? 'retorno combinado' : 'retornos combinados'}`, 'para os próximos dias') : ''}`;
@@ -863,7 +865,7 @@ function telaComprar() {
 }
 
 function telaRetornos() {
-  const futuros = S.retornos.filter((r) => r.data >= hojeIso() && !acaoDe(r).excluido);
+  const futuros = S.retornos.filter((r) => r.data >= hojeIso() && !acaoDe(r).excluido && !vendidoDepois(r));
   // agrupado por data (data grande no topo de cada grupo, recolhível; lembra os abertos no aparelho)
   const porData = {};
   for (const r of futuros) (porData[r.data] = porData[r.data] || []).push(r);

@@ -790,11 +790,104 @@ def laco_acordar():
         time.sleep(60)
 
 
+# --------------------------------------------------------------------------- venda lançada direto na Gestão
+# O João às vezes lança a venda direto na Gestão (troca, venda mais detalhada). Se o telefone do comprador é
+# de um cliente que o Retomazera conhece (lista, vendas, retornos, fila), o cliente vira "vendido" (sai das
+# sugestões e dos retornos) e a venda aparece concluída na aba Vendas (com custo e lucro da Gestão).
+def clientes_conhecidos():
+    """Últimos 8 dígitos do telefone → cliente do WhatsApp (o registro mais novo vale)."""
+    conh = {}
+    def pega(x):
+        if isinstance(x, dict) and str(x.get("canal") or "").lower() == "whatsapp":
+            dig = re.sub(r"\D", "", str(x.get("contato") or ""))
+            if len(dig) >= 10:
+                conh[dig[-8:]] = {"nome": x.get("nome") or "", "canal": "whatsapp", "contato": x.get("contato")}
+    for x in list(ler_espera().values()) + list(ler_retornos().values()):
+        pega(x)
+    for dia in sorted(dias_locais(30) + noites_locais(10), key=lambda d: d.get("geradoEm") or 0):
+        for x in (dia.get("itens") or []) + (dia.get("agendadas") or []) + (dia.get("confirmar") or []):
+            pega(x)
+    return conh
+
+
+def vendas_direto_gestao():
+    desde = (date.today() - timedelta(days=3)).isoformat()
+    try:
+        c = sqlite3.connect(GESTAO_DB, uri=True, timeout=10)
+        vendas = c.execute("select uid, nome, preco_venda, data_venda, tel_comprador, nome_comprador from produtos "
+                           "where data_venda>=? and coalesce(preco_venda,0)>0 and coalesce(tel_comprador,'')<>''", (desde,)).fetchall()
+        trocas = {}
+        for nome, de in c.execute("select nome, troca_de from produtos where coalesce(troca_de,'')<>''"):
+            trocas.setdefault(de, []).append((nome or "").strip())
+        c.close()
+    except sqlite3.Error as exc:
+        print(f"[gestão] vendas diretas: {exc}")
+        return 0
+    if not vendas:
+        return 0
+    acoes, conh = ler_acoes(), clientes_conhecidos()
+    novas, agora = {}, int(time.time() * 1000)
+    por_cliente = {}
+    for uid, nome, pv, dv, tel, comp in vendas:
+        dig = re.sub(r"\D", "", tel or "")[-8:]
+        if len(dig) != 8 or dig not in conh or (acoes.get(f"gestao:{uid}") or {}).get("cliente"):
+            continue
+        por_cliente.setdefault((dig, dv), []).append((uid, (nome or "").strip(), float(pv), comp or ""))
+    for (dig, dv), itens in por_cliente.items():
+        cli = conh[dig]
+        k = f"whatsapp:{dig}"
+        # já existe venda marcada desse cliente perto da data? conclui ela em vez de criar outra
+        existente = None
+        # a lista mais nova vale (igual ao app): a última venda marcada desse cliente perto da data
+        for dia in sorted(dias_locais(30) + noites_locais(10), key=lambda d: d.get("geradoEm") or 0):
+            for a in dia.get("agendadas") or []:
+                if isinstance(a, dict) and chave_cliente(a) == k and a.get("data") and \
+                        (date.fromisoformat(dv) - timedelta(days=7)).isoformat() <= a["data"] <= (date.fromisoformat(dv) + timedelta(days=3)).isoformat():
+                    existente = a
+        if existente:
+            vk = f"venda:{k}:{existente['data']}"
+        else:
+            vk = f"venda:{k}:{dv}"
+            entrada = ", ".join(n for uid, *_ in itens for n in trocas.get(uid, []))
+            nova = {"nome": cli["nome"] or itens[0][3], "canal": "whatsapp", "contato": cli["contato"], "data": dv, "hora": "",
+                    "local": "", "entrega": "", "itens": [{"descricao": n, "valor": v} for _, n, v, _ in itens],
+                    "total": round(sum(v for _, _, v, _ in itens), 2), "pagamento": "", "entrada": entrada,
+                    "status": "confirmada", "observacoes": "Venda lançada direto na Gestão.", "resumo": ""}
+            arq = os.path.join(PASTA_DIAS, dv + ".json")
+            try:
+                with open(arq, encoding="utf-8") as f:
+                    dia = json.load(f)
+            except (OSError, ValueError):
+                dia = {"data": dv, "geradoEm": agora, "resumo": "", "fontes": {}, "itens": [], "agendadas": []}
+            ag = {chave_cliente(a): a for a in dia.get("agendadas") or [] if isinstance(a, dict)}
+            ag[k] = nova
+            dia["agendadas"] = list(ag.values())
+            with open(arq + ".tmp", "w", encoding="utf-8") as f:
+                json.dump(dia, f, ensure_ascii=False, indent=1)
+            os.replace(arq + ".tmp", arq)
+        if not (acoes.get(vk) or {}).get("concluida"):
+            novas[vk] = {**(acoes.get(vk) or {}), "nome": cli["nome"], "canal": "whatsapp", "data": vk.rsplit(":", 1)[1],
+                         "concluida": True, "obs": (acoes.get(vk) or {}).get("obs") or "Lançada direto na Gestão", "ts": agora}
+        a = acoes.get(k) or {}
+        inicio_dv = int(time.mktime(time.strptime(dv, "%Y-%m-%d")) * 1000)
+        if not a.get("vendido") or (a.get("vendidoEm") or 0) < inicio_dv:
+            novas[k] = {**a, "nome": cli["nome"], "canal": "whatsapp", "contato": cli["contato"], "vendido": True,
+                        "vendidoEm": agora, "ts": agora}
+        for uid, *_ in itens:
+            novas[f"gestao:{uid}"] = {"cliente": k, "ts": agora}
+        print(f"[gestão] venda lançada direto na Gestão: {cli['nome']} ({dv}) → marcada no Retomazera")
+    if novas:
+        gravar_acoes(novas)
+    return len(novas)
+
+
 def laco_espera():
     assinatura = None
     while True:
         try:
             verificar_espera()
+            if vendas_direto_gestao():
+                publicar_gist()
             # estoque mudou na Gestão (chegou, vendeu, mudou custo/foto)? republica para a aba Fila do celular
             atual = json.dumps([[u["uid"], u["status"], u["custo"], u["preco"], u["para"], bool(u["foto"])] for u in estoque_fila()])
             if assinatura is not None and atual != assinatura:
