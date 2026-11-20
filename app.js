@@ -729,7 +729,7 @@ document.addEventListener('toggle', (ev) => {
   try {
     const chave = d.dataset.grupo || 'filaAbertos';
     const l = new Set(JSON.parse(localStorage.getItem(chave) || '[]'));
-    d.open ? l.add(d.dataset.fam) : l.delete(d.dataset.fam);
+    (d.open !== Boolean(d.dataset.inverso)) ? l.add(d.dataset.fam) : l.delete(d.dataset.fam);
     localStorage.setItem(chave, JSON.stringify([...l].slice(-60)));
   } catch { /* sem armazenamento: só não lembra */ }
 }, true);
@@ -1039,6 +1039,29 @@ function cartao(x) {
   </div>`;
 }
 
+// aba Hoje: um grupo por videogame (o que o cliente quer; o que entra na troca, entre parênteses, não conta).
+// Cada grupo começa aberto e lembra no aparelho quem foi fechado.
+const FAMILIAS_VG = [['PS5', /\bps ?5\b|playstation ?5/], ['PS4 Pro', /\bps ?4 ?pro\b/], ['PS4', /\bps ?4\b|playstation ?4/],
+  ['PS3', /\bps ?3\b|playstation ?3/], ['PS2', /\bps ?2\b|playstation ?2/], ['Xbox Series X', /series ?x\b/],
+  ['Xbox Series S', /series ?s\b/], ['Xbox One', /xbox ?one/], ['Xbox 360', /xbox ?360/], ['Nintendo Switch', /switch/],
+  ['PS Vita', /vita/], ['PSP', /\bpsp\b/], ['iPhone', /iphone/]];
+function videogameDe(x) {
+  const t = String(x.produto || '').replace(/\([^)]*\)/g, ' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  let melhor = null;
+  for (const [nome, rx] of FAMILIAS_VG) { const m = t.match(rx); if (m && (!melhor || m.index < melhor.i)) melhor = { nome, i: m.index }; }
+  return melhor ? melhor.nome : 'Outros';
+}
+function gruposPorVideogame(itens) {
+  const g = {};
+  itens.forEach((x) => { const f = videogameDe(x); (g[f] = g[f] || []).push(x); });
+  const nomes = Object.keys(g).sort((a, b) => (a === 'Outros') - (b === 'Outros') || g[b].length - g[a].length || a.localeCompare(b));
+  return nomes.map((f) => {
+    const l = g[f], pend = l.filter((x) => { const a = acaoDe(x); return !a.chamado && !a.vendido; }).length;
+    return `<details class="grupo-fila grupo-vg" data-grupo="hojeFechados" data-inverso="1" data-fam="${esc(f)}" ${grupoAberto('hojeFechados', f) ? '' : 'open'}>
+      <summary><span class="gf-nome">${f === 'Outros' ? '📦' : ICONE_FAMILIA(f)} ${esc(f)}</span> <span class="gf-n">${l.length} cliente(s) · ${pend} pendente(s)</span></summary>
+      ${l.map(cartao).join('')}</details>`;
+  }).join('');
+}
 function telaDia(dia, titulo) {
   if (!dia && titulo === 'Chamar hoje' && (S.noites.length || vendasMarcadas().length)) {
     return `<h1>Chamar hoje</h1>${blocoNoite()}${blocoChegou()}${linkVendasHoje()}${blocoRetornos(new Set())}<div class="vazio">A lista de quem chamar chega uns minutos depois que o PC é ligado.</div>`;
@@ -1077,7 +1100,7 @@ function telaDia(dia, titulo) {
     </div>
     ${titulo === 'Chamar hoje' ? blocoNoite() + blocoChegou() + linkVendasHoje() + blocoRetornos(chavesDoDia) : ''}
     ${fixadosAntigos.length ? `<h2 style="margin:4px 0 8px">📌 Fixados</h2>${fixadosAntigos.map(cartao).join('')}<h2 style="margin:14px 0 8px">Lista do dia</h2>` : ''}
-    ${itens.length ? itens.map(cartao).join('') : '<div class="vazio">Ninguém para retomar a partir desse dia. 👍</div>'}
+    ${itens.length ? (titulo === 'Chamar hoje' ? gruposPorVideogame(itens) : itens.map(cartao).join('')) : '<div class="vazio">Ninguém para retomar a partir desse dia. 👍</div>'}
     ${excluidos.length ? `<p class="sub"><a href="#" data-mostrar-excluidos="1">🗑️ ${excluidos.length} excluído(s) — ${S.mostrarExcluidos ? 'esconder' : 'mostrar'}</a></p>${S.mostrarExcluidos ? excluidos.map(cartao).join('') : ''}` : ''}
     ${Object.keys(fontes).length ? `<p class="sub">Fontes lidas: ${Object.entries(fontes).map(([k, v]) => `${esc(k)}: ${esc(v)}`).join(' · ')}</p>` : ''}`;
 }
