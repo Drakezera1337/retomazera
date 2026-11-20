@@ -561,6 +561,20 @@ function lerFormVenda(modal) {
       if (t) rec[k] = { tipo: t.value, nome: t.value === 'Dinheiro' ? '' : l.querySelector('.fp-nome').value.trim() };
     });
     if (!Object.values(pag).some(Boolean)) erro('Marque a forma de pagamento.');
+    // o preço tem que bater com a soma das formas de pagamento (vazio = o que falta, só em uma forma)
+    const qual = item.dataset.nome ? ` (${item.dataset.nome.split('|')[0].trim()})` : '';
+    const formas = Object.keys(pag).filter((k) => pag[k]);
+    const vazias = formas.filter((k) => !val[k]);
+    const somaInf = formas.reduce((t, k) => t + (val[k] || 0), 0);
+    const nomeF = (k) => (FORMAS.find(([f]) => f === k) || [k, k])[1];
+    if (vazias.length > 1) erro(`Preencha o valor de ${vazias.map(nomeF).join(' e ')}${qual}: com mais de uma forma, só uma pode ficar vazia (vazia = o que falta).`);
+    if (vazias.length === 1) {
+      const falta = Math.round((preco - somaInf) * 100) / 100;
+      if (falta <= 0) erro(`As formas de pagamento já somam ${brlV(somaInf)}, mas o preço de venda é ${brlV(preco)}${qual}. Corrija os valores.`);
+      val[vazias[0]] = falta;
+    } else if (Math.abs(somaInf - preco) > 0.01) {
+      erro(`O preço de venda é ${brlV(preco)}, mas as formas de pagamento somam ${brlV(somaInf)}${qual} — ${somaInf > preco ? 'sobram' : 'faltam'} ${brlV(Math.abs(somaInf - preco))}. Corrija os valores.`);
+    }
     const parcelas = pag.fiado ? [...item.querySelectorAll('.fv-parcela')].map((p, i) => {
       const venc = p.querySelector('.fp-venc').value, valor = brlNum(p.querySelector('.fp-pval').value);
       if (!venc) erro(`Data da ${i + 1}ª parcela do fiado.`);
