@@ -46,6 +46,7 @@ async function carregar() {
       S.fotosOfertas = fo || {};
       S.dias = l.dias || []; S.semanas = l.semanas || []; S.noites = l.noites || []; S.retornos = l.retornos || []; S.espera = l.espera || []; S.estoque = l.estoque || []; S.ofertas = l.ofertas || []; S.precos = l.precos || {}; S.gestao = l.gestao || {}; S.lancadas = l.lancadas || {}; S.ts = l.ts || 0;
       S.acoes = juntarAcoes(ac || {}, lerJSON(K.acoesPendentes, {}));
+      enviarPendentes(ac || {});
       gravarJSON(K.cache, { dias: S.dias, semanas: S.semanas, noites: S.noites, retornos: S.retornos, espera: S.espera, estoque: S.estoque, ofertas: S.ofertas, precos: S.precos, gestao: S.gestao, lancadas: S.lancadas, acoes: S.acoes, ts: S.ts });
     }
   } catch (err) {
@@ -54,6 +55,26 @@ async function carregar() {
   S.carregando = false;
   rotear();
 }
+
+// ação que não chegou ao Gist (GitHub limitou, sem internet): reenvia sozinha ao abrir/atualizar o app
+// e de 2 em 2 min, sem esperar o João mexer em outro card (20/11: a venda do Patrick ficou presa no celular)
+let enviandoPend = false;
+async function enviarPendentes(remoto) {
+  const pend = lerJSON(K.acoesPendentes, {});
+  if (enviandoPend || NO_PC || !Sync.enabled() || !Object.keys(pend).length) return;
+  enviandoPend = true;
+  try {
+    const atual = remoto || (await Sync.ler({ 'acoes.json': {} }))['acoes.json'] || {};
+    const junto = juntarAcoes(atual, pend);
+    await Sync.gravar('acoes.json', junto);
+    const agora = lerJSON(K.acoesPendentes, {});  // o que entrou enquanto enviava fica para a próxima
+    for (const k of Object.keys(pend)) if (agora[k] && agora[k].ts === pend[k].ts) delete agora[k];
+    gravarJSON(K.acoesPendentes, agora);
+    S.acoes = juntarAcoes(S.acoes, junto);
+    toast('✅ Ações pendentes enviadas');
+  } catch { /* tenta de novo depois */ } finally { enviandoPend = false; }
+}
+setInterval(() => { if (!document.hidden) enviarPendentes(); }, 120000);
 
 // ---------------------------------------------------------------- ações nos cards (sincronizadas)
 // Fixar, Já chamei, Vendido e Excluir valem para o CLIENTE (não só para o card do dia) e ficam no Gist
