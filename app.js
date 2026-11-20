@@ -1434,3 +1434,8 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catc
 rotear();
 carregar();
 conferirInscricao();
+
+// sem zoom no app: o iPhone ignora o user-scalable=no, então bloqueia o gesto de pinça
+['gesturestart', 'gesturechange', 'gestureend'].forEach((ev) => document.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
+document.addEventListener('touchmove', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+// duplo toque: resolvido pelo touch-action: manipulation (styles.css), sem atrasar toques rápidos nos botões

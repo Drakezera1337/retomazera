@@ -174,3 +174,7 @@ video { width: 100%; border-radius: 12px; margin-top: 10px; }
 .grupo-data > summary { gap: 14px; flex-wrap: nowrap; }
 .grupo-data .gd-data { font-size: 2.1rem; font-weight: 800; letter-spacing: .5px; line-height: 1; color: var(--verde, #19c37d); min-width: 4.2ch; }
 .grupo-data .gd-info { display: flex; flex-direction: column; gap: 2px; }
+
+/* sem zoom: nada de duplo toque para ampliar, e campo com letra >= 16px (o iPhone amplia ao tocar em campo menor) */
+html, body { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+input, select, textarea { font-size: 16px !important; }
