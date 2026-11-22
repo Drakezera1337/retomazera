@@ -642,8 +642,8 @@ function blocoNoite() {
     ${prep.length ? `<div class="painel"><h2>✅ Checklist <span class="sub">${feitos}/${prep.length}</span></h2>
       ${prep.map((p) => { const ok = (S.acoes[p.k] || {}).feito; return `<label class="check ${ok ? 'ok' : ''}"><input type="checkbox" data-prep="${esc(p.k)}" ${ok ? 'checked' : ''}> <span>${esc(p.t)}</span></label>`; }).join('')}
     </div>` : ''}
-    ${deHoje && vendas.length ? `<h2 style="margin:14px 0 8px">📦 Vendas de amanhã (${vendas.length})</h2>${vendas.map(cartaoVenda).join('')}` : ''}
-    ${conf.length ? `<h2 style="margin:14px 0 8px">📞 Confirmar hoje à noite</h2>${conf.map(cartao).join('')}` : ''}`;
+    ${deHoje && vendas.length ? `<h2 style="margin:14px 0 8px">📦 Vendas de amanhã (${vendas.length})</h2>${gruposPorCanal('vendas-amanha', vendas, { render: cartaoVenda, pend: false, rotulo: 'venda(s)' })}` : ''}
+    ${conf.length ? `<h2 style="margin:14px 0 8px">📞 Confirmar hoje à noite</h2>${gruposPorVideogame(conf, { ns: 'confirmar' })}` : ''}`;
 }
 
 // ---------------------------------------------------------------- retornos combinados ("me chama mês que vem")
@@ -659,7 +659,7 @@ function blocoRetornos(chavesDoDia) {
     .filter((r) => { const a = acaoDe(r); return !a.excluido && !a.vendido && !a.chamado; });
   const futuros = S.retornos.filter((r) => r.data > hoje && !acaoDe(r).excluido && !vendidoDepois(r));
   if (!devidos.length && !futuros.length) return '';
-  return `${devidos.length ? `<h2 style="margin:4px 0 8px">📅 Combinado de chamar hoje (${devidos.length})</h2>${devidos.map(cartao).join('')}` : ''}
+  return `${devidos.length ? `<h2 style="margin:4px 0 8px">📅 Combinado de chamar hoje (${devidos.length})</h2>${gruposPorVideogame(devidos, { ns: 'combinado' })}` : ''}
     ${futuros.length ? atalho('#/retornos', '📅', `${futuros.length} ${futuros.length === 1 ? 'retorno combinado' : 'retornos combinados'}`, 'para os próximos dias') : ''}`;
 }
 // ---------------------------------------------------------------- fila de espera ("quando chegar eu te aviso")
@@ -683,7 +683,7 @@ function blocoChegou() {
   const chegou = esperaAtiva().filter((e) => e.chegou && !acaoDe({ ...e, _listaEm: e.chegou.em }).chamado);
   const fila = esperaAtiva().length;
   if (!chegou.length && !fila) return '';
-  return `${chegou.length ? `<h2 style="margin:4px 0 8px">🔔 Chegou o que estavam esperando (${chegou.length})</h2>${chegou.map((e) => cardEspera(e, true)).join('')}` : ''}
+  return `${chegou.length ? `<h2 style="margin:4px 0 8px">🔔 Chegou o que estavam esperando (${chegou.length})</h2>${gruposPorVideogame(chegou, { ns: 'chegou', pend: false, render: (e) => cardEspera(e, true) })}` : ''}
     ${fila ? atalho('#/espera', '⏳', `${fila} ${fila === 1 ? 'cliente' : 'clientes'} na fila de espera`, 'esperando chegar o videogame') : ''}`;
 }
 // unidades da Gestão (disponíveis e chegando) do modelo, com foto, custo e para quem cada uma vai.
@@ -831,7 +831,7 @@ function telaEspera() {
   };
   const vaiUsar = (e) => { const u = aloc.porChave[e.chave]; if (aloc.comVenda.has(`${chaveCliente(e)}|${e.familia}`)) return '💰 Já tem venda marcada desse modelo (sai da fila quando concluir)'; return !u ? '' : u.situacao === 'disponivel' ? `✅ Vai usar: ${u.nome || u.item} (custo ${brlV(u.custo)})` : `🔮 Previsto (chegando): ${u.nome || u.item} (custo ${brlV(u.custo)})`; };
   return `<h1>⏳ Fila de espera</h1><p class="sub">Clientes esperando um modelo sem estoque. Quando a Gestão tiver o item em "Aguardando venda", você recebe a notificação e eles aparecem na aba Hoje. Videogame disponível vai para o primeiro da fila que ele atende; o que está chegando só mostra a previsão e vai para quem for o primeiro quando chegar — use ▲ ▼ para mudar a prioridade.</p>
-    ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<details class="grupo-fila" data-fam="${esc(f)}" ${filaAberta(f) ? 'open' : ''}><summary><span class="gf-nome">${esc(f)}</span> <span class="gf-n">${l.length} na fila${S.estoque.filter((u) => u.familia === f).length ? ` · ${S.estoque.filter((u) => u.familia === f).length} unidade(s) na Gestão` : ''}</span>${l.some((e) => e.chegou) ? ' <span class="chip vend">🔔 tem no estoque</span>' : ''}</summary>${blocoEstoque(f)}${filaOrdenada(l).map((e, i, arr) => `<div class="ordem-fila"><b>${i + 1}º da fila</b><span><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="-1" ${i ? '' : 'disabled'}>▲ Subir</button><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="1" ${i < arr.length - 1 ? '' : 'disabled'}>▼ Descer</button></span></div>${cardEspera(e, Boolean(e.chegou), vaiUsar(e))}`).join('')}</details>`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
+    ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<details class="grupo-fila" data-fam="${esc(f)}" ${filaAberta(f) ? 'open' : ''}><summary><span class="gf-nome">${esc(f)}</span> <span class="gf-n">${l.length} na fila${S.estoque.filter((u) => u.familia === f).length ? ` · ${S.estoque.filter((u) => u.familia === f).length} unidade(s) na Gestão` : ''}</span>${l.some((e) => e.chegou) ? ' <span class="chip vend">🔔 tem no estoque</span>' : ''}</summary>${blocoEstoque(f)}${((ord) => gruposPorCanal(`fila:${f}`, ord, { pend: false, rotulo: 'na fila', render: (e) => { const i = ord.indexOf(e), arr = ord; return `<div class="ordem-fila"><b>${i + 1}º da fila</b><span><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="-1" ${i ? '' : 'disabled'}>▲ Subir</button><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="1" ${i < arr.length - 1 ? '' : 'disabled'}>▼ Descer</button></span></div>${cardEspera(e, Boolean(e.chegou), vaiUsar(e))}`; } }))(filaOrdenada(l))}</details>`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
 }
 
 // ---------------------------------------------------------------- comprar: gente querendo vender videogame (WhatsApp)
@@ -895,8 +895,8 @@ function telaComprar() {
   const abertas = S.ofertas.filter((o) => !st(o).comprei && !st(o).descartada);
   const fechadas = S.ofertas.filter((o) => st(o).comprei || st(o).descartada);
   return `<h1>🛒 Comprar</h1><p class="sub">Gente querendo te vender videogame no WhatsApp (últimos 30 dias), com o que você costuma pagar e vender na Gestão.</p>
-    ${abertas.length ? abertas.map(cartaoOferta).join('') : '<div class="vazio">Nenhuma oferta em aberto. Quando alguém oferecer um videogame no WhatsApp, aparece aqui.</div>'}
-    ${fechadas.length ? `<p class="sub"><a href="#" data-mostrar-excluidos="1">✅ ${fechadas.length} comprada(s)/descartada(s) — ${S.mostrarExcluidos ? 'esconder' : 'mostrar'}</a></p>${S.mostrarExcluidos ? fechadas.map(cartaoOferta).join('') : ''}` : ''}`;
+    ${abertas.length ? gruposPorVideogame(abertas, { ns: 'comprar', pend: false, rotulo: 'oferta(s)', render: cartaoOferta }) : '<div class="vazio">Nenhuma oferta em aberto. Quando alguém oferecer um videogame no WhatsApp, aparece aqui.</div>'}
+    ${fechadas.length ? `<p class="sub"><a href="#" data-mostrar-excluidos="1">✅ ${fechadas.length} comprada(s)/descartada(s) — ${S.mostrarExcluidos ? 'esconder' : 'mostrar'}</a></p>${S.mostrarExcluidos ? gruposPorVideogame(fechadas, { ns: 'comprar-fechadas', pend: false, rotulo: 'oferta(s)', render: cartaoOferta }) : ''}` : ''}`;
 }
 
 function telaRetornos() {
@@ -914,7 +914,7 @@ function telaRetornos() {
     return `<details class="grupo-fila grupo-data" data-grupo="retornosAbertos" data-fam="${esc(d)}" ${grupoAberto('retornosAbertos', d) ? 'open' : ''}>
       <summary><span class="gd-data">${String(dd).padStart(2, '0')}/${String(m).padStart(2, '0')}</span>
         <span class="gd-info"><b>${esc(semana)}</b><span class="gf-n">${esc(quando)} · ${lista.length} ${lista.length === 1 ? 'cliente' : 'clientes'}</span></span></summary>
-      ${lista.map((r) => cartao({ ...r, prioridade: 'media', situacao: r.pedido || '' })).join('')}</details>`;
+      ${gruposPorVideogame(lista, { ns: `ret-${d}`, pend: false, render: (r) => cartao({ ...r, prioridade: 'media', situacao: r.pedido || '' }) })}</details>`;
   }).join('');
   return `<h1>📅 Retornos combinados</h1><p class="sub">Clientes que pediram para ser chamados numa data. No dia, aparecem na aba Hoje.</p>
     ${futuros.length ? grupos : '<div class="vazio">Nenhum retorno combinado.</div>'}`;
@@ -940,9 +940,9 @@ function blocoVendas(naAba) {
   if (!doDia.length && !atrasadas.length && !proximas.length) return '';
   const r = resultadoVendas(doDia);
   return `<h2 style="margin:4px 0 8px">📦 Vendas do dia${doDia.length ? ` (${doDia.length})` : ''}</h2>
-    ${doDia.length ? `${r.fat ? `<p class="sub">Faturamento <b>${esc(brlV(r.fat))}</b> · Lucro <b class="lucro">${esc(brlV(r.lucro))}</b></p>` : ''}${doDia.map(cartaoVenda).join('')}` : '<p class="sub">Nenhuma venda marcada para hoje.</p>'}
-    ${atrasadas.length ? `<h2 style="margin:14px 0 8px">⚠️ Ficaram pendentes</h2>${atrasadas.map(cartaoVenda).join('')}` : ''}
-    ${proximas.length ? `<h2 style="margin:14px 0 8px">🗓️ Próximas (${proximas.length})${somaLucro(proximas)}</h2>${proximas.map(cartaoVenda).join('')}` : ''}
+    ${doDia.length ? `${r.fat ? `<p class="sub">Faturamento <b>${esc(brlV(r.fat))}</b> · Lucro <b class="lucro">${esc(brlV(r.lucro))}</b></p>` : ''}${gruposPorCanal('vendas-dia', doDia, { render: cartaoVenda, pend: false, rotulo: 'venda(s)' })}` : '<p class="sub">Nenhuma venda marcada para hoje.</p>'}
+    ${atrasadas.length ? `<h2 style="margin:14px 0 8px">⚠️ Ficaram pendentes</h2>${gruposPorCanal('vendas-atrasadas', atrasadas, { render: cartaoVenda, pend: false, rotulo: 'venda(s)' })}` : ''}
+    ${proximas.length ? `<h2 style="margin:14px 0 8px">🗓️ Próximas (${proximas.length})${somaLucro(proximas)}</h2>${gruposPorCanal('vendas-proximas', proximas, { render: cartaoVenda, pend: false, rotulo: 'venda(s)' })}` : ''}
     ${naAba ? '' : '<h2 style="margin:18px 0 8px">📲 Para chamar</h2>'}`;
 }
 // faturamento = total combinado; lucro = faturamento − custo (Gestão) dos videogames que vão em cada venda.
@@ -1051,29 +1051,36 @@ function videogameDe(x) {
   for (const [nome, rx] of FAMILIAS_VG) { const m = t.match(rx); if (m && (!melhor || m.index < melhor.i)) melhor = { nome, i: m.index }; }
   return melhor ? melhor.nome : 'Outros';
 }
-function gruposPorVideogame(itens) {
+// Agrupamento usado em todo lugar onde dá para chamar alguém: por videogame (o que o cliente quer) e, dentro,
+// por canal — WhatsApp sempre primeiro. Cada grupo começa aberto e lembra no aparelho quem foi fechado.
+// op: render (cartão de cada item), ns (separa a memória de abertos de cada lugar), pend (conta pendentes), rotulo
+const ORDEM_CANAL = ['whatsapp', 'olx', 'facebook', 'instagram'];
+const posCanal = (c) => { const i = ORDEM_CANAL.indexOf(c); return i < 0 ? 99 : i; };
+const pendentesDe = (l) => l.filter((x) => { const a = acaoDe(x); return !a.chamado && !a.vendido; }).length;
+function detalheGrupo(cls, k, summary, corpo) {
+  return `<details class="grupo-fila ${cls}" data-grupo="hojeFechados" data-inverso="1" data-fam="${esc(k)}" ${grupoAberto('hojeFechados', k) ? '' : 'open'}>
+    <summary>${summary}</summary>${corpo}</details>`;
+}
+function contagemGrupo(l, op) {
+  return `<span class="gf-n">${l.length} ${op.rotulo || 'cliente(s)'}${op.pend === false ? '' : ` · ${pendentesDe(l)} pendente(s)`}</span>`;
+}
+function gruposPorVideogame(itens, op = {}) {
   const g = {};
   itens.forEach((x) => { const f = videogameDe(x); (g[f] = g[f] || []).push(x); });
   const nomes = Object.keys(g).sort((a, b) => (a === 'Outros') - (b === 'Outros') || g[b].length - g[a].length || a.localeCompare(b));
   return nomes.map((f) => {
-    const l = g[f], pend = l.filter((x) => { const a = acaoDe(x); return !a.chamado && !a.vendido; }).length;
-    return `<details class="grupo-fila grupo-vg" data-grupo="hojeFechados" data-inverso="1" data-fam="${esc(f)}" ${grupoAberto('hojeFechados', f) ? '' : 'open'}>
-      <summary><span class="gf-nome">${f === 'Outros' ? '📦' : ICONE_FAMILIA(f)} ${esc(f)}</span> <span class="gf-n">${l.length} cliente(s) · ${pend} pendente(s)</span></summary>
-      ${gruposPorCanal(f, l)}</details>`;
+    const k = op.ns ? `${op.ns}:${f}` : f;
+    return detalheGrupo('grupo-vg', k, `<span class="gf-nome">${f === 'Outros' ? '📦' : ICONE_FAMILIA(f)} ${esc(f)}</span> ${contagemGrupo(g[f], op)}`,
+      gruposPorCanal(k, g[f], op));
   }).join('');
 }
-// dentro de cada videogame, um subgrupo por canal (WhatsApp, OLX, Facebook…), também colapsável
-function gruposPorCanal(f, l) {
+function gruposPorCanal(f, l, op = {}) {
   const g = {};
   l.forEach((x) => { const c = (x.canal || 'outro').toLowerCase(); (g[c] = g[c] || []).push(x); });
-  const ordem = ['whatsapp', 'olx', 'facebook', 'instagram'];
-  const pos = (c) => { const i = ordem.indexOf(c); return i < 0 ? 99 : i; };
-  return Object.keys(g).sort((a, b) => pos(a) - pos(b) || a.localeCompare(b)).map((c) => {
+  return Object.keys(g).sort((a, b) => posCanal(a) - posCanal(b) || a.localeCompare(b)).map((c) => {
     const [cls, nm] = CANAIS[c] || ['', c.charAt(0).toUpperCase() + c.slice(1)];
-    const k = `${f}|${c}`, pend = g[c].filter((x) => { const a = acaoDe(x); return !a.chamado && !a.vendido; }).length;
-    return `<details class="grupo-fila grupo-canal" data-grupo="hojeFechados" data-inverso="1" data-fam="${esc(k)}" ${grupoAberto('hojeFechados', k) ? '' : 'open'}>
-      <summary><span class="chip ${cls}">${esc(nm)}</span> <span class="gf-n">${g[c].length} cliente(s) · ${pend} pendente(s)</span></summary>
-      ${g[c].map(cartao).join('')}</details>`;
+    return detalheGrupo('grupo-canal', `${f}|${c}`, `<span class="chip ${cls}">${esc(nm)}</span> ${contagemGrupo(g[c], op)}`,
+      g[c].map((x) => (op.render || cartao)(x)).join(''));
   }).join('');
 }
 function telaDia(dia, titulo) {
@@ -1113,9 +1120,9 @@ function telaDia(dia, titulo) {
       ${Object.entries(porCanal).map(([c, n]) => { const [cls, nm] = CANAIS[c] || ['', c]; return `<span class="chip ${cls}">${esc(nm)} ${n}</span>`; }).join('')}
     </div>
     ${titulo === 'Chamar hoje' ? blocoNoite() + blocoChegou() + linkVendasHoje() + blocoRetornos(chavesDoDia) : ''}
-    ${fixadosAntigos.length ? `<h2 style="margin:4px 0 8px">📌 Fixados</h2>${fixadosAntigos.map(cartao).join('')}<h2 style="margin:14px 0 8px">Lista do dia</h2>` : ''}
-    ${itens.length ? (titulo === 'Chamar hoje' ? gruposPorVideogame(itens) : itens.map(cartao).join('')) : '<div class="vazio">Ninguém para retomar a partir desse dia. 👍</div>'}
-    ${excluidos.length ? `<p class="sub"><a href="#" data-mostrar-excluidos="1">🗑️ ${excluidos.length} excluído(s) — ${S.mostrarExcluidos ? 'esconder' : 'mostrar'}</a></p>${S.mostrarExcluidos ? excluidos.map(cartao).join('') : ''}` : ''}
+    ${fixadosAntigos.length ? `<h2 style="margin:4px 0 8px">📌 Fixados</h2>${gruposPorVideogame(fixadosAntigos, { ns: 'fixados' })}<h2 style="margin:14px 0 8px">Lista do dia</h2>` : ''}
+    ${itens.length ? gruposPorVideogame(itens, { ns: titulo === 'Chamar hoje' ? '' : `dia-${dia.data}` }) : '<div class="vazio">Ninguém para retomar a partir desse dia. 👍</div>'}
+    ${excluidos.length ? `<p class="sub"><a href="#" data-mostrar-excluidos="1">🗑️ ${excluidos.length} excluído(s) — ${S.mostrarExcluidos ? 'esconder' : 'mostrar'}</a></p>${S.mostrarExcluidos ? gruposPorVideogame(excluidos, { ns: 'excluidos', pend: false }) : ''}` : ''}
     ${Object.keys(fontes).length ? `<p class="sub">Fontes lidas: ${Object.entries(fontes).map(([k, v]) => `${esc(k)}: ${esc(v)}`).join(' · ')}</p>` : ''}`;
 }
 
