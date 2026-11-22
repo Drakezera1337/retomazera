@@ -1059,7 +1059,21 @@ function gruposPorVideogame(itens) {
     const l = g[f], pend = l.filter((x) => { const a = acaoDe(x); return !a.chamado && !a.vendido; }).length;
     return `<details class="grupo-fila grupo-vg" data-grupo="hojeFechados" data-inverso="1" data-fam="${esc(f)}" ${grupoAberto('hojeFechados', f) ? '' : 'open'}>
       <summary><span class="gf-nome">${f === 'Outros' ? '📦' : ICONE_FAMILIA(f)} ${esc(f)}</span> <span class="gf-n">${l.length} cliente(s) · ${pend} pendente(s)</span></summary>
-      ${l.map(cartao).join('')}</details>`;
+      ${gruposPorCanal(f, l)}</details>`;
+  }).join('');
+}
+// dentro de cada videogame, um subgrupo por canal (WhatsApp, OLX, Facebook…), também colapsável
+function gruposPorCanal(f, l) {
+  const g = {};
+  l.forEach((x) => { const c = (x.canal || 'outro').toLowerCase(); (g[c] = g[c] || []).push(x); });
+  const ordem = ['whatsapp', 'olx', 'facebook', 'instagram'];
+  const pos = (c) => { const i = ordem.indexOf(c); return i < 0 ? 99 : i; };
+  return Object.keys(g).sort((a, b) => pos(a) - pos(b) || a.localeCompare(b)).map((c) => {
+    const [cls, nm] = CANAIS[c] || ['', c.charAt(0).toUpperCase() + c.slice(1)];
+    const k = `${f}|${c}`, pend = g[c].filter((x) => { const a = acaoDe(x); return !a.chamado && !a.vendido; }).length;
+    return `<details class="grupo-fila grupo-canal" data-grupo="hojeFechados" data-inverso="1" data-fam="${esc(k)}" ${grupoAberto('hojeFechados', k) ? '' : 'open'}>
+      <summary><span class="chip ${cls}">${esc(nm)}</span> <span class="gf-n">${g[c].length} cliente(s) · ${pend} pendente(s)</span></summary>
+      ${g[c].map(cartao).join('')}</details>`;
   }).join('');
 }
 function telaDia(dia, titulo) {
