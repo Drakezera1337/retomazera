@@ -826,11 +826,15 @@ def vendas_direto_gestao():
     if not vendas:
         return 0
     acoes, conh = ler_acoes(), clientes_conhecidos()
+    # vendas que o PRÓPRIO Retomazera lançou na Gestão não são "vendas diretas": remarcá-las aqui
+    # sobrescrevia a ação sem o formulário da venda, e em 22/11/2026 isso fez 4 vendas serem desfeitas
+    lancados = {it.get("uid") for r in ler_lancadas().values() if isinstance(r, dict)
+                for it in (r.get("itens") or []) if isinstance(it, dict)}
     novas, agora = {}, int(time.time() * 1000)
     por_cliente = {}
     for uid, nome, pv, dv, tel, comp in vendas:
         dig = re.sub(r"\D", "", tel or "")[-8:]
-        if len(dig) != 8 or dig not in conh or (acoes.get(f"gestao:{uid}") or {}).get("cliente"):
+        if len(dig) != 8 or dig not in conh or uid in lancados or (acoes.get(f"gestao:{uid}") or {}).get("cliente"):
             continue
         por_cliente.setdefault((dig, dv), []).append((uid, (nome or "").strip(), float(pv), comp or ""))
     for (dig, dv), itens in por_cliente.items():
@@ -888,6 +892,7 @@ def laco_espera():
             verificar_espera()
             if vendas_direto_gestao():
                 publicar_gist()
+            verificar_semana_desatualizada()
             # estoque mudou na Gestão (chegou, vendeu, mudou custo/foto)? republica para a aba Fila do celular
             atual = json.dumps([[u["uid"], u["status"], u["custo"], u["preco"], u["para"], bool(u["foto"])] for u in estoque_fila()])
             if assinatura is not None and atual != assinatura:
@@ -1113,9 +1118,11 @@ def lancar_vendas_gestao(acoes):
                         reg[k] = _lancar(con, g)
                         print(f"[gestão] venda lançada: {', '.join(i['nome'][:40] for i in reg[k]['itens'])}")
                     else:
-                        _desfazer(con, feito)
-                        reg.pop(k, None)
-                        print(f"[gestão] venda desfeita: {k}")
+                        # NUNCA desfaz uma venda na Gestão automaticamente. Em 22/11/2026 uma lista de ações
+                        # incompleta (internet caindo + análise da ronda) fez o Retomazera "desfazer" 4 vendas
+                        # verdadeiras. Venda desmarcada no app agora só é anotada; desfazer é pela Gestão.
+                        reg[k] = {**feito, "naoDesfez": True, "erro": "desmarcada no Retomazera — a venda continua na Gestão"}
+                        print(f"[gestão] venda desmarcada no app, NÃO desfeita na Gestão: {k}")
             except (ValueError, sqlite3.Error) as exc:
                 print(f"[gestão] {k}: {exc}")
                 if quer:  # a transação voltou atrás: se já tinha um lançamento, ele continua valendo
@@ -1980,7 +1987,56 @@ def semana_anterior(hoje=None):
     return ini.isoformat(), fim.isoformat(), f"{ano}-S{sem:02d}"
 
 
-def analisar_semana(notificar=True, forcar=False):
+def numeros_gestao_semana(ini, fim):
+    """Vendas, faturamento e lucro da semana direto da Gestão (para saber se o resumo ficou velho)."""
+    try:
+        c = sqlite3.connect(GESTAO_DB, uri=True, timeout=10)
+        n, fat, luc = c.execute("select count(*), coalesce(sum(preco_venda),0), coalesce(sum(coalesce(preco_venda,0)-coalesce(preco_compra,0)"
+                                "-coalesce(custo_reparo,0)),0) from produtos where data_venda between ? and ? and coalesce(preco_venda,0)>0",
+                                (ini, fim)).fetchone()
+        c.close()
+    except sqlite3.Error:
+        return None
+    return {"vendas": n, "faturamento": round(fat), "lucro": round(luc)}
+
+
+# Vendas lançadas na Gestão depois do resumo (ex.: a do celular que ficou pendente, a lançada à tarde) deixavam o
+# resumo com números velhos. Até 7 dias depois do fim da semana, se as vendas/lucro da semana na Gestão mudarem e
+# ficarem paradas por 20 min, o resumo é refeito (no máximo 3 vezes por semana).
+_semana_mud = {"assin": None, "desde": 0}
+
+
+def verificar_semana_desatualizada():
+    ini, fim, chave = semana_anterior()
+    arquivo = os.path.join(PASTA_SEMANAS, chave + ".json")
+    if _analise["rodando"] or not os.path.exists(arquivo) or date.today() > date.fromisoformat(fim) + timedelta(days=7):
+        return
+    try:
+        with open(arquivo, encoding="utf-8") as f:
+            rel = json.load(f)
+    except (OSError, ValueError):
+        return
+    atual = numeros_gestao_semana(ini, fim)
+    if not atual:
+        return
+    num = rel.get("numeros") or {}
+    base = rel.get("gestao") or {"vendas": num.get("vendas"), "lucro": round(float(num.get("lucro") or 0))}
+    if atual["vendas"] == base.get("vendas") and abs(atual["lucro"] - (base.get("lucro") or 0)) < 1:
+        _semana_mud["assin"] = None
+        return
+    if (rel.get("refeito") or 0) >= 3:
+        return
+    if _semana_mud["assin"] != atual:  # mudou agora: espera parar de mexer
+        _semana_mud.update(assin=atual, desde=time.time())
+        return
+    if time.time() - _semana_mud["desde"] < 20 * 60:
+        return
+    print(f"[semana] {chave}: Gestão mudou ({base.get('vendas')} → {atual['vendas']} vendas, lucro {base.get('lucro')} → {atual['lucro']}); refazendo o resumo")
+    _semana_mud["assin"] = None
+    threading.Thread(target=analisar_semana, kwargs={"forcar": True, "refeito": (rel.get("refeito") or 0) + 1}, daemon=True).start()
+
+
+def analisar_semana(notificar=True, forcar=False, refeito=0):
     ini, fim, chave = semana_anterior()
     arquivo = os.path.join(PASTA_SEMANAS, chave + ".json")
     with _analise["lock"]:
@@ -2004,7 +2060,8 @@ def analisar_semana(notificar=True, forcar=False):
             raise RuntimeError(f"o Claude não gravou semanas/{chave}.json (código {r.returncode})")
         with open(arquivo, encoding="utf-8") as f:
             rel = json.load(f)
-        rel.update({"semana": chave, "inicio": ini, "fim": fim, "geradoEm": int(time.time() * 1000)})
+        rel.update({"semana": chave, "inicio": ini, "fim": fim, "geradoEm": int(time.time() * 1000),
+                    "gestao": numeros_gestao_semana(ini, fim), "refeito": refeito})
         with open(arquivo, "w", encoding="utf-8") as f:
             json.dump(rel, f, ensure_ascii=False, indent=1)
         try:
@@ -2014,7 +2071,7 @@ def analisar_semana(notificar=True, forcar=False):
         n = 0
         if notificar:
             br = lambda iso: "/".join(reversed(iso.split("-")[1:]))
-            n = enviar_push({"title": f"📊 Resumo da semana {br(ini)} a {br(fim)}",
+            n = enviar_push({"title": f"📊 Resumo da semana {br(ini)} a {br(fim)}" + (" (atualizado)" if refeito else ""),
                              "body": str(rel.get("titulo") or "Toque para ver como foi a semana.")[:180],
                              "tag": "retomazera-" + chave, "data": "semana/" + chave})
         print(f"[semana] {chave}: pronto em {time.time() - inicio:.0f} s, push={n}")
