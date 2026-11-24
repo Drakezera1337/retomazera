@@ -500,6 +500,52 @@ STATUS_FILA = {"Aguardando venda": "disponivel", "Chegando": "chegando"}  # "Agu
 _miniaturas = {}
 
 
+def foto_grande(caminho):
+    """Foto em tamanho de tela (JPEG ~1080px) para ampliar no app; cacheada pelo arquivo."""
+    if not caminho or not os.path.exists(caminho):
+        return ""
+    chave = ("g", caminho, os.path.getmtime(caminho))
+    if chave not in _miniaturas:
+        try:
+            from PIL import Image, ImageOps
+            import base64
+            import io
+            with Image.open(caminho) as im:
+                im = ImageOps.exif_transpose(im).convert("RGB")
+                im.thumbnail((1080, 1080))
+                buf = io.BytesIO()
+                im.save(buf, "JPEG", quality=70, optimize=True)
+            _miniaturas[chave] = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[vendas] foto grande {caminho}: {exc}")
+            _miniaturas[chave] = ""
+    return _miniaturas[chave]
+
+
+def fotos_estoque_grandes():
+    """{uid: [fotos grandes]} só dos videogames que atendem alguma venda marcada (aba Vendas), até 4 fotos cada.
+    Vai num arquivo separado do Gist (fotos_estoque.json), só quando muda."""
+    uids = [u["uid"] for u in estoque_fila() if any(k.startswith("venda:") for k in u.get("atende") or [])]
+    if not uids:
+        return {}
+    try:
+        c = sqlite3.connect(GESTAO_DB, uri=True, timeout=10)
+        linhas = c.execute(f"select uid, fotos from produtos where uid in ({','.join('?' * len(uids))})", uids).fetchall()
+        c.close()
+    except sqlite3.Error:
+        return {}
+    saida = {}
+    for uid, fotos in linhas:
+        try:
+            lista = json.loads(fotos) if fotos else []
+        except ValueError:
+            lista = []
+        grandes = [g for g in (foto_grande(p) for p in lista[:4]) if g]
+        if grandes:
+            saida[uid] = grandes
+    return saida
+
+
 def miniatura(caminho):
     """Primeira foto do item reduzida (JPEG ~240px em data URI) para ir no Gist sem pesar."""
     if not caminho or not os.path.exists(caminho):
@@ -1244,8 +1290,11 @@ def _publicar_gist():
     fotos = json.dumps(fotos_ofertas_publicas())
     if fotos != _gist_pendente.get("fotos"):  # fotos pesam: só vão quando mudam (no mesmo PATCH)
         arquivos["fotos_ofertas.json"] = {"content": fotos}
+    fotos_est = json.dumps(fotos_estoque_grandes())
+    if fotos_est != _gist_pendente.get("fotosEstoque"):
+        arquivos["fotos_estoque.json"] = {"content": fotos_est}
     gist_request("PATCH", {"files": arquivos})
-    _gist_pendente.update(pendente=False, ate=0, fotos=fotos)
+    _gist_pendente.update(pendente=False, ate=0, fotos=fotos, fotosEstoque=fotos_est)
     return True
 
 
@@ -2206,7 +2255,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json({"dias": dias_locais(), "semanas": semanas_locais(), "noites": noites_locais(), "acoes": ler_acoes(),
                                "retornos": retornos_publicos(),
                                "espera": espera_publica(), "estoque": estoque_fila(), "ofertas": ofertas_publicas(), "precos": precos_referencia(),
-                               "fotosOfertas": fotos_ofertas_publicas(), "gestao": opcoes_gestao(), "lancadas": lancadas_publicas(),
+                               "fotosOfertas": fotos_ofertas_publicas(), "fotosEstoque": fotos_estoque_grandes(), "gestao": opcoes_gestao(), "lancadas": lancadas_publicas(),
                                "ts": int(time.time() * 1000)})
         if path == "/api/analise":  # a extensão pergunta: a análise dessa coleta já ficou pronta?
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)

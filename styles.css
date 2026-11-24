@@ -182,3 +182,5 @@ input, select, textarea { font-size: 16px !important; }
 .grupo-canal { margin: 8px 0; padding: 0 8px; border-radius: 12px; }
 .grupo-canal > summary { font-size: 1rem; padding: 10px 0; }
 .grupo-canal[open] { padding-bottom: 6px; }
+
+img.ampliavel { cursor: zoom-in; }

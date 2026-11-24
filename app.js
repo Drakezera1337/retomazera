@@ -39,11 +39,11 @@ async function carregar() {
   try {
     if (NO_PC) {
       const r = await api('lembretes');
-      S.dias = r.dias || []; S.semanas = r.semanas || []; S.noites = r.noites || []; S.retornos = r.retornos || []; S.espera = r.espera || []; S.estoque = r.estoque || []; S.ofertas = r.ofertas || []; S.precos = r.precos || {}; S.fotosOfertas = r.fotosOfertas || {}; S.gestao = r.gestao || {}; S.lancadas = r.lancadas || {}; S.acoes = r.acoes || {}; S.ts = r.ts;
+      S.dias = r.dias || []; S.semanas = r.semanas || []; S.noites = r.noites || []; S.retornos = r.retornos || []; S.espera = r.espera || []; S.estoque = r.estoque || []; S.ofertas = r.ofertas || []; S.precos = r.precos || {}; S.fotosOfertas = r.fotosOfertas || {}; S.fotosEstoque = r.fotosEstoque || {}; S.gestao = r.gestao || {}; S.lancadas = r.lancadas || {}; S.acoes = r.acoes || {}; S.ts = r.ts;
       S.status = await api('status');
     } else if (Sync.enabled()) {
-      const { 'lembretes.json': l, 'acoes.json': ac, 'fotos_ofertas.json': fo } = await Sync.ler({ 'lembretes.json': { dias: [] }, 'acoes.json': {}, 'fotos_ofertas.json': {} });
-      S.fotosOfertas = fo || {};
+      const { 'lembretes.json': l, 'acoes.json': ac, 'fotos_ofertas.json': fo, 'fotos_estoque.json': fe } = await Sync.ler({ 'lembretes.json': { dias: [] }, 'acoes.json': {}, 'fotos_ofertas.json': {}, 'fotos_estoque.json': {} });
+      S.fotosOfertas = fo || {}; S.fotosEstoque = fe || {};
       S.dias = l.dias || []; S.semanas = l.semanas || []; S.noites = l.noites || []; S.retornos = l.retornos || []; S.espera = l.espera || []; S.estoque = l.estoque || []; S.ofertas = l.ofertas || []; S.precos = l.precos || {}; S.gestao = l.gestao || {}; S.lancadas = l.lancadas || {}; S.ts = l.ts || 0;
       S.acoes = juntarAcoes(ac || {}, lerJSON(K.acoesPendentes, {}));
       enviarPendentes(ac || {});
@@ -285,7 +285,7 @@ function blocoUnidadesVenda(v) {
     if (!u) return `<div class="unidade"><div class="sem-foto">❓</div><div class="unidade-txt"><b>Não achei ${esc(fam)} livre no estoque da Gestão</b>${troca}</div></div>`;
     const lucro = Number(it.valor) && u.custo ? Number(it.valor) - Number(u.custo) : null;
     return `<div class="unidade">
-      ${u.foto ? `<img src="${u.foto}" alt="" loading="lazy">` : `<div class="sem-foto">${ICONE_FAMILIA(u.familia)}</div>`}
+      ${u.foto ? `<img src="${u.foto}" alt="" loading="lazy" data-ampliar-uid="${esc(u.uid)}" class="ampliavel">` : `<div class="sem-foto">${ICONE_FAMILIA(u.familia)}</div>`}
       <div class="unidade-txt"><span class="sub">🎮 Vai este:</span> <b>${esc(u.nome || u.item)}</b>
         <div>${u.situacao === 'disponivel' ? '<span class="st-ok">✅ Disponível</span>' : '<span class="st-chegando">🚚 Chegando — ainda não está com você!</span>'}${S.acoes[chave]?.uid === u.uid ? ' 📌' : ''}</div>
         <div>Custo <b>${brlV(u.custo) || '—'}</b>${brlV(it.valor) ? ` · Vendido por ${brlV(it.valor)}` : ` · <button class="btn-link" data-editar-valor="${esc(chave)}">✏️ pôr valor de venda</button>`}${lucro != null ? ` · <span class="lucro">${lucro >= 0 ? '+' : ''}${brlV(lucro)}</span>` : ''}</div>
@@ -444,7 +444,7 @@ function abrirFormVenda(chaveVenda) {
     }).join('');
     const parc = a?.parcelas?.length ? a.parcelas : [];
     return `<div class="fv-item" data-uid="${esc(x.u.uid)}" data-custo="${Number(x.u.custo) || 0}" data-nome="${esc(x.u.nome || x.u.item || '')}" data-familia="${esc(x.u.familia || '')}" data-descricao="${esc(x.it.descricao || '')}">
-      <div class="unidade">${x.u.foto ? `<img src="${x.u.foto}" alt="">` : `<div class="sem-foto">${ICONE_FAMILIA(x.u.familia)}</div>`}
+      <div class="unidade">${x.u.foto ? `<img src="${x.u.foto}" alt="" data-ampliar-uid="${esc(x.u.uid)}" class="ampliavel">` : `<div class="sem-foto">${ICONE_FAMILIA(x.u.familia)}</div>`}
         <div class="unidade-txt"><b>${esc(x.u.nome || x.u.item)}</b><div class="sub">${esc(x.it.descricao || '')} · custo ${esc(brlV(x.u.custo) || '—')}</div></div></div>
       <label class="fv-campo">Preço de venda (R$)<input class="fv-preco" inputmode="decimal" value="${esc(numTxt(preco))}"></label>
       <div class="fv-lucro sub"></div>
@@ -895,13 +895,26 @@ function cartaoOferta(o) {
     </div>
   </div>`;
 }
-function ampliarFoto(chave, i) {
-  const fotos = S.fotosOfertas[chave] || [];
+function ampliarFoto(chave, i) { mostrarFotos(S.fotosOfertas[chave] || [], i); }
+// foto do videogame (aba Vendas): a grande vem do PC (fotos_estoque.json); sem ela, amplia a miniatura
+function ampliarFotoUnidade(uid, mini) {
+  const g = (S.fotosEstoque || {})[uid] || [];
+  mostrarFotos(g.length ? g : [mini], 0);
+}
+// tela cheia: toque na foto passa para a próxima; toque fora (ou na última) fecha
+function mostrarFotos(fotos, i) {
   if (!fotos[i]) return;
   document.querySelector('.foto-grande')?.remove();
   const d = document.createElement('div');
   d.className = 'foto-grande';
-  d.innerHTML = `<img src="${fotos[i]}" alt=""><span>${i + 1} de ${fotos.length} · toque para fechar</span>`;
+  d.dataset.i = i;
+  const pinta = () => { const n = Number(d.dataset.i); d.innerHTML = `<img src="${fotos[n]}" alt=""><span>${fotos.length > 1 ? `${n + 1} de ${fotos.length} · toque na foto para a próxima · ` : ''}toque fora para fechar</span>`; };
+  pinta();
+  d.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const n = Number(d.dataset.i);
+    if (ev.target.tagName === 'IMG' && n < fotos.length - 1) { d.dataset.i = n + 1; pinta(); } else d.remove();
+  });
   document.body.appendChild(d);
 }
 function marcarOferta(chave, campo) {
@@ -1438,6 +1451,8 @@ document.addEventListener('click', async (e) => {
   }
   const amp = e.target.closest('[data-ampliar]');
   if (amp) { ampliarFoto(amp.dataset.ampliar, Number(amp.dataset.i)); return; }
+  const ampU = e.target.closest('[data-ampliar-uid]');
+  if (ampU) { e.preventDefault(); ampliarFotoUnidade(ampU.dataset.ampliarUid, ampU.getAttribute('src')); return; }
   if (e.target.closest('.foto-grande')) { e.target.closest('.foto-grande').remove(); return; }
   const of = e.target.closest('[data-oferta]');
   if (of) { marcarOferta(of.dataset.chave, of.dataset.oferta); return; }
