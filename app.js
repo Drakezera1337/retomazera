@@ -733,9 +733,26 @@ document.addEventListener('toggle', (ev) => {
     localStorage.setItem(chave, JSON.stringify([...l].slice(-60)));
   } catch { /* sem armazenamento: só não lembra */ }
 }, true);
+// orçamento que o cliente APROVOU (o que o João marcou no app vale mais que o da análise); 0 = não aprovou
+function orcAprovado(e) {
+  const m = S.acoes[`orc:${e.chave}`];
+  if (m && 'valor' in m) return Number(m.valor) || 0;
+  return e.aprovado ? Number(e.orcamento) || 0 : 0;
+}
+// ordem da fila: orçamento aprovado mais alto primeiro; depois a ordem do João (▲▼); depois quem entrou antes
 function filaOrdenada(lista = esperaAtiva()) {
   const pos = (e) => { const l = S.acoes[`ordem:${e.familia}`]?.lista || []; const i = l.indexOf(e.chave); return i < 0 ? 1e6 : i; };
-  return lista.slice().sort((a, b) => pos(a) - pos(b) || (a.desde || '').localeCompare(b.desde || ''));
+  return lista.slice().sort((a, b) => orcAprovado(b) - orcAprovado(a) || pos(a) - pos(b) || (a.desde || '').localeCompare(b.desde || ''));
+}
+function marcarOrcamento(chave) {
+  const e = S.espera.find((x) => x.chave === chave);
+  if (!e) return;
+  const atual = orcAprovado(e);
+  const r = prompt(`Orçamento que ${e.nome || 'o cliente'} APROVOU para o ${e.familia} (R$).
+Deixe vazio se ele não aprovou.`, atual ? String(atual) : (e.orcamento || ''));
+  if (r === null) return;
+  const v = Number(String(r).replace(/[^\d,]/g, '').replace(',', '.')) || 0;
+  salvarAcoes({ [`orc:${chave}`]: { valor: v, ts: Date.now() } });
 }
 function moverNaFila(chave, dir) {
   const e = S.espera.find((x) => x.chave === chave);
@@ -743,6 +760,8 @@ function moverNaFila(chave, dir) {
   const l = filaOrdenada(esperaAtiva().filter((x) => x.familia === e.familia)).map((x) => x.chave);
   const i = l.indexOf(chave), j = i + dir;
   if (i < 0 || j < 0 || j >= l.length) return;
+  const orc = (k) => orcAprovado(S.espera.find((x) => x.chave === k) || {});
+  if (orc(l[i]) !== orc(l[j])) return toast('A ordem segue o orçamento aprovado: mude o orçamento (💰) para passar na frente.');
   [l[i], l[j]] = [l[j], l[i]];
   salvarAcoes({ [`ordem:${e.familia}`]: { lista: l, ts: Date.now() } });
 }
@@ -830,8 +849,8 @@ function telaEspera() {
     return `<details class="estoque" open><summary>📦 Estoque na Gestão: ${disp} disponível(is) · ${us.length - disp} chegando</summary>${us.map((u) => unidadeEstoque(u, aloc)).join('')}</details>`;
   };
   const vaiUsar = (e) => { const u = aloc.porChave[e.chave]; if (aloc.comVenda.has(`${chaveCliente(e)}|${e.familia}`)) return '💰 Já tem venda marcada desse modelo (sai da fila quando concluir)'; return !u ? '' : u.situacao === 'disponivel' ? `✅ Vai usar: ${u.nome || u.item} (custo ${brlV(u.custo)})` : `🔮 Previsto (chegando): ${u.nome || u.item} (custo ${brlV(u.custo)})`; };
-  return `<h1>⏳ Fila de espera</h1><p class="sub">Clientes esperando um modelo sem estoque. Quando a Gestão tiver o item em "Aguardando venda", você recebe a notificação e eles aparecem na aba Hoje. Videogame disponível vai para o primeiro da fila que ele atende; o que está chegando só mostra a previsão e vai para quem for o primeiro quando chegar — use ▲ ▼ para mudar a prioridade.</p>
-    ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<details class="grupo-fila" data-fam="${esc(f)}" ${filaAberta(f) ? 'open' : ''}><summary><span class="gf-nome">${esc(f)}</span> <span class="gf-n">${l.length} na fila${S.estoque.filter((u) => u.familia === f).length ? ` · ${S.estoque.filter((u) => u.familia === f).length} unidade(s) na Gestão` : ''}</span>${l.some((e) => e.chegou) ? ' <span class="chip vend">🔔 tem no estoque</span>' : ''}</summary>${blocoEstoque(f)}${((ord) => gruposPorCanal(`fila:${f}`, ord, { pend: false, rotulo: 'na fila', render: (e) => { const i = ord.indexOf(e), arr = ord; return `<div class="ordem-fila"><b>${i + 1}º da fila</b><span><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="-1" ${i ? '' : 'disabled'}>▲ Subir</button><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="1" ${i < arr.length - 1 ? '' : 'disabled'}>▼ Descer</button></span></div>${cardEspera(e, Boolean(e.chegou), vaiUsar(e))}`; } }))(filaOrdenada(l))}</details>`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
+  return `<h1>⏳ Fila de espera</h1><p class="sub">Clientes esperando um modelo sem estoque. Quando a Gestão tiver o item em "Aguardando venda", você recebe a notificação e eles aparecem na aba Hoje. Videogame disponível vai para o primeiro da fila que ele atende; o que está chegando só mostra a previsão e vai para quem for o primeiro quando chegar — quem aprovou o orçamento mais alto fica na frente (💰 para marcar o valor que o cliente aprovou); entre orçamentos iguais, use ▲ ▼ para mudar a prioridade.</p>
+    ${Object.keys(porFamilia).length ? Object.entries(porFamilia).map(([f, l]) => `<details class="grupo-fila" data-fam="${esc(f)}" ${filaAberta(f) ? 'open' : ''}><summary><span class="gf-nome">${esc(f)}</span> <span class="gf-n">${l.length} na fila${S.estoque.filter((u) => u.familia === f).length ? ` · ${S.estoque.filter((u) => u.familia === f).length} unidade(s) na Gestão` : ''}</span>${l.some((e) => e.chegou) ? ' <span class="chip vend">🔔 tem no estoque</span>' : ''}</summary>${blocoEstoque(f)}${((ord) => gruposPorCanal(`fila:${f}`, ord, { pend: false, rotulo: 'na fila', render: (e) => { const i = ord.indexOf(e), arr = ord; return `<div class="ordem-fila"><b>${i + 1}º da fila</b><span>${orcAprovado(e) ? `<span class="chip vend">💰 aprovou ${esc(brlV(orcAprovado(e)))}</span>` : ''}<button class="btn btn-mini" data-orc="${esc(e.chave)}">💰</button><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="-1" ${i && orcAprovado(arr[i - 1]) === orcAprovado(e) ? '' : 'disabled'}>▲ Subir</button><button class="btn btn-mini" data-mover="${esc(e.chave)}" data-dir="1" ${i < arr.length - 1 && orcAprovado(arr[i + 1]) === orcAprovado(e) ? '' : 'disabled'}>▼ Descer</button></span></div>${cardEspera(e, Boolean(e.chegou), vaiUsar(e))}`; } }))(filaOrdenada(l))}</details>`).join('') : '<div class="vazio">Ninguém na fila de espera.</div>'}`;
 }
 
 // ---------------------------------------------------------------- comprar: gente querendo vender videogame (WhatsApp)
@@ -1424,6 +1443,8 @@ document.addEventListener('click', async (e) => {
   if (of) { marcarOferta(of.dataset.chave, of.dataset.oferta); return; }
   const mv = e.target.closest('[data-mover]');
   if (mv) { moverNaFila(mv.dataset.mover, Number(mv.dataset.dir)); return; }
+  const orcB = e.target.closest('[data-orc]');
+  if (orcB) { marcarOrcamento(orcB.dataset.orc); return; }
   const dv = e.target.closest('[data-desvincular],[data-revincular]');
   if (dv) { vincular(dv.dataset.desvincular || dv.dataset.revincular, dv.dataset.uid, dv.dataset.desvincular ? 'desvincular' : 'desfazer'); return; }
   const b = e.target.closest('[data-acao]');

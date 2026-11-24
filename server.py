@@ -396,6 +396,28 @@ def gravar_espera(reg):
         os.replace(tmp, ESPERA)
 
 
+def valor_reais(v):
+    try:
+        n = float(re.sub(r"[^\d,.]", "", str(v)).replace(".", "").replace(",", ".")) if isinstance(v, str) else float(v or 0)
+    except ValueError:
+        return 0
+    return round(n, 2) if 50 <= n <= 100000 else 0
+
+
+def orcamento_aprovado(acoes, k, e):
+    """Valor do orçamento que o cliente APROVOU (o do João no app vale mais que o da análise); 0 se não aprovou."""
+    m = acoes.get("orc:" + k) or {}
+    if "valor" in m:
+        return float(m.get("valor") or 0)
+    return float(e.get("orcamento") or 0) if e.get("aprovado") else 0
+
+
+def posicao_fila(acoes, k, e):
+    """Ordem da fila: orçamento aprovado mais alto primeiro; depois a ordem do João (▲▼); depois quem entrou antes."""
+    lista = acoes.get("ordem:" + (e.get("familia") or ""), {}).get("lista") or []
+    return (-orcamento_aprovado(acoes, k, e), lista.index(k) if k in lista else 10 ** 6, e.get("desde") or "")
+
+
 def registrar_espera(lista, origem_data):
     """Cliente esperando um modelo: chave = cliente + família. Fica até 120 dias (ou até vender/excluir)."""
     reg = ler_espera()
@@ -412,6 +434,11 @@ def registrar_espera(lista, origem_data):
                   "detalhes": str(x.get("detalhes") or "")[:300], "pedido": str(x.get("pedido") or "")[:300],
                   "mensagem": str(x.get("mensagem") or "")[:600],
                   "desde": antigo.get("desde") or origem_data, "ts": int(time.time() * 1000)}
+        # orçamento passado ao cliente e se ele aprovou (a ronda que não fala nisso mantém o que já sabia)
+        orc = valor_reais(x.get("orcamento"))
+        if orc:
+            reg[k]["orcamento"] = orc
+            reg[k]["aprovado"] = bool(x.get("aprovado"))
     limite = (date.today() - timedelta(days=120)).isoformat()
     reg = {k: v for k, v in reg.items() if (v.get("desde") or "") >= limite}
     gravar_espera(reg)
@@ -571,7 +598,7 @@ def estoque_fila(reg=None):
     for u in unidades:  # quem (fila e itens de venda) essa unidade atende — o app faz a divisão na hora
         u["atende"] = [k for k, e in fila if e.get("familia") == u["familia"] and atende(e, u)] +                       [k for k, fam, desc in itens_venda if fam == u["familia"] and atende({"produto": desc}, u)]
     usadas = set()
-    for k, e in sorted(fila, key=lambda x: x[1].get("desde") or ""):
+    for k, e in sorted(fila, key=lambda x: posicao_fila(acoes, x[0], x[1])):
         fora = set(acoes.get(k.split("|")[0], {}).get("semUnidade") or [])  # unidades que o João desvinculou dele
         u = next((u for u in unidades if u["uid"] not in usadas and u["uid"] not in fora and k in u["atende"]), None)
         if u:
@@ -611,11 +638,7 @@ def alocar_disponiveis(reg, unidades, acoes):
     com_venda = {k[len("venda:"):].rsplit(":", 1)[0] + "|" + u["familia"]
                  for u in unidades for k in u.get("atende") or [] if k.startswith("venda:")}
     ativos = [(k, e) for k, e in reg.items() if not cliente_fora_da_fila(acoes, k, e) and k not in com_venda]
-    def pos(item):
-        k, e = item
-        lista = acoes.get("ordem:" + (e.get("familia") or ""), {}).get("lista") or []
-        return (lista.index(k) if k in lista else 10 ** 6, e.get("desde") or "")
-    ativos.sort(key=pos)
+    ativos.sort(key=lambda item: posicao_fila(acoes, *item))
     dono, usados = {}, set(reservadas)
     manuais = []
     for k, e in ativos:
